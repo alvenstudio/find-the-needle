@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-ssr/
+.DS_Store
+*.local
+*.log
+.vite/
+.blend1
+.blend2
+/tools/.cache/

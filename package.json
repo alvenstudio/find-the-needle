@@ -1,0 +1,24 @@
+{
+  "name": "find-the-needle",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A first-person haystack-searching game built with three.js.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "assets": "node tools/build-assets.mjs",
+    "balance": "node tools/balance.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
