@@ -1,16 +1,16 @@
 import {
   ACESFilmicToneMapping,
-  Clock,
-  PCFSoftShadowMap,
+  PCFShadowMap,
   PerspectiveCamera,
   Scene,
+  Timer,
+  Vector2,
   WebGLRenderer,
 } from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { Vector2 } from 'three';
 
 import { Signal } from './Signals';
 import { clamp } from './MathX';
@@ -22,8 +22,10 @@ export interface QualityProfile {
   maxPixelRatio: number;
   shadows: boolean;
   shadowMapSize: number;
-  /** Number of straw instances the haystack shell is allowed to keep alive. */
-  strawBudget: number;
+  /** Straw instances spread across the whole pile. */
+  shellBudget: number;
+  /** Straw instances packed into the detail band that follows the player. */
+  bandBudget: number;
   bloom: boolean;
   bloomStrength: number;
   antialias: boolean;
@@ -38,7 +40,8 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
     maxPixelRatio: 1,
     shadows: false,
     shadowMapSize: 1024,
-    strawBudget: 7000,
+    shellBudget: 4500,
+    bandBudget: 1800,
     bloom: false,
     bloomStrength: 0,
     antialias: false,
@@ -50,7 +53,8 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
     maxPixelRatio: 1.25,
     shadows: true,
     shadowMapSize: 1024,
-    strawBudget: 13000,
+    shellBudget: 9000,
+    bandBudget: 5000,
     bloom: true,
     bloomStrength: 0.16,
     antialias: false,
@@ -62,7 +66,8 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
     maxPixelRatio: 1.6,
     shadows: true,
     shadowMapSize: 2048,
-    strawBudget: 20000,
+    shellBudget: 15000,
+    bandBudget: 9000,
     bloom: true,
     bloomStrength: 0.22,
     antialias: true,
@@ -74,7 +79,8 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
     maxPixelRatio: 2,
     shadows: true,
     shadowMapSize: 3072,
-    strawBudget: 30000,
+    shellBudget: 24000,
+    bandBudget: 15000,
     bloom: true,
     bloomStrength: 0.26,
     antialias: true,
@@ -112,7 +118,9 @@ export class Engine {
 
   private composer: EffectComposer | null = null;
   private bloomPass: UnrealBloomPass | null = null;
-  private readonly clock = new Clock(false);
+  // `Clock` is deprecated since r183; `Timer` is the core replacement and has
+  // the useful property that getDelta() is stable within a step.
+  private readonly timer = new Timer();
   private accumulator = 0;
   private rafHandle = 0;
   private running = false;
@@ -148,7 +156,9 @@ export class Engine {
     this.renderer.toneMapping = ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = this.profile.shadows;
-    this.renderer.shadowMap.type = PCFSoftShadowMap;
+    // PCFSoftShadowMap is deprecated in r185 and silently downgrades to
+    // PCFShadowMap with a console warning, so ask for what we actually get.
+    this.renderer.shadowMap.type = PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = true;
     this.renderer.info.autoReset = false;
 
@@ -186,14 +196,13 @@ export class Engine {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.clock.start();
+    this.timer.reset();
     this.accumulator = 0;
     this.rafHandle = requestAnimationFrame(this.tick);
   }
 
   stop(): void {
     this.running = false;
-    this.clock.stop();
     cancelAnimationFrame(this.rafHandle);
   }
 
@@ -214,7 +223,8 @@ export class Engine {
 
     // A tab that was backgrounded returns a huge delta; clamping it stops the
     // simulation from trying to catch up through thousands of steps.
-    const delta = Math.min(this.clock.getDelta(), 0.25);
+    this.timer.update();
+    const delta = Math.min(this.timer.getDelta(), 0.25);
     this.frameTimeAverage += (delta - this.frameTimeAverage) * 0.08;
     this.fps = 1 / Math.max(this.frameTimeAverage, 1e-4);
 

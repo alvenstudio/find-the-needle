@@ -54,23 +54,29 @@ def sweep_rect(name, spine, half_w, half_h, color=None, family="Prop", caps=True
 
 
 def build_straw():
-    """A single stalk of straw: 0.30 m long, tapered, with a lazy S-bend."""
-    length = 0.30
+    """A single sliver of straw: 0.38 m long, flat, with a lazy S-bend.
+
+    Deliberately wide and flat rather than round. Sixteen thousand of these tile
+    the surface of the pile, and a flat sliver covers roughly four times the
+    area of a round stalk of the same length for the same instance cost -- and
+    per-instance overhead, not triangles, is what the pile is bound by.
+    """
+    length = 0.38
     stations = 4
     spine = []
     for i in range(stations):
         t = i / (stations - 1)
         # A shallow S so a field of randomly rotated straws never looks gridded.
-        bend = math.sin(t * math.pi) * 0.018 - math.sin(t * math.pi * 2.0) * 0.010
+        bend = math.sin(t * math.pi) * 0.026 - math.sin(t * math.pi * 2.0) * 0.014
         spine.append((bend, 0.0, (t - 0.5) * length))
 
     # Taper: fat in the middle third, pinched at the tips.
     half_w, half_h = [], []
     for i in range(stations):
         t = i / (stations - 1)
-        girth = 0.35 + 0.65 * math.sin(min(max(t, 0.0), 1.0) * math.pi) ** 0.5
-        half_w.append(0.0175 * girth)
-        half_h.append(0.0105 * girth)
+        girth = 0.4 + 0.6 * math.sin(min(max(t, 0.0), 1.0) * math.pi) ** 0.5
+        half_w.append(0.031 * girth)
+        half_h.append(0.008 * girth)
 
     straw = sweep_rect("Straw", spine, half_w, half_h, color="straw", family="Prop")
     # A darker crease down one face catches the light and sells the fibre.

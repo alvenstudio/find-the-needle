@@ -72,17 +72,28 @@ def sweep_bar(name, spine, half, color=None, family="Prop"):
     count = len(spine)
     halves = list(half) if hasattr(half, "__len__") else [half] * count
     verts, faces = [], []
+    # The reference up-vector is carried along the spine rather than re-derived
+    # from world up at every point.  Re-deriving it means a segment that happens
+    # to be near-vertical picks a different fallback axis from its neighbour and
+    # the bar takes a visible 90 degree twist at that joint -- and the bucket
+    # handle sits 0.0003 away from exactly that threshold.
+    ref_up = Vector((0.0, 0.0, 1.0))
     for i, point in enumerate(spine):
         centre = Vector(point)
         forward = Vector(spine[min(i + 1, count - 1)]) - Vector(spine[max(i - 1, 0)])
         if forward.length < 1e-6:
             forward = Vector((0.0, 0.0, 1.0))
         forward.normalize()
-        up = Vector((0.0, 0.0, 1.0))
-        if abs(forward.dot(up)) > 0.95:
-            up = Vector((0.0, 1.0, 0.0))
+        up = ref_up - forward * ref_up.dot(forward)
+        if up.length < 1e-4:
+            # Only reachable if the spine doubles back on itself; pick any axis
+            # that is not parallel to forward and carry on.
+            seed = Vector((0.0, 1.0, 0.0)) if abs(forward.z) > 0.9 else Vector((0.0, 0.0, 1.0))
+            up = seed - forward * seed.dot(forward)
+        up.normalize()
         side = forward.cross(up).normalized()
         up = side.cross(forward).normalized()
+        ref_up = up
         h = halves[i]
         verts.extend([
             centre + side * h + up * h,
@@ -91,15 +102,17 @@ def sweep_bar(name, spine, half, color=None, family="Prop"):
             centre + side * h - up * h,
         ])
 
+    # side x up = -forward here, so the ring winds clockwise about forward and
+    # every face has to be listed in reverse to end up pointing outwards.
     for i in range(count - 1):
         a, b = i * 4, (i + 1) * 4
         for k in range(4):
             k2 = (k + 1) % 4
-            faces.append((a + k, a + k2, b + k2, b + k))
+            faces.append((a + k2, a + k, b + k, b + k2))
 
-    faces.append((3, 2, 1, 0))
+    faces.append((0, 1, 2, 3))
     last = (count - 1) * 4
-    faces.append((last, last + 1, last + 2, last + 3))
+    faces.append((last + 3, last + 2, last + 1, last))
 
     return from_points(name, verts, faces, color=color, family=family)
 
@@ -165,8 +178,12 @@ def slatted_box(edge, rows, lid, tag="Crate", wood="wood", frame="wood_dark"):
         parts.append(cube(f"{tag}Floor", size=(span, floor_w, board_t),
                           loc=(0.0, i * floor_step, board_t / 2), color=frame))
     if lid:
+        # Kept narrower than the slat span so the lid's end grain never lands on
+        # the same plane as a wall slat or a corner post: coincident co-normal
+        # quads on the top of the crate are the most-looked-at z-fight there is.
+        lid_w = span - board_t / 2.0
         for i in (-1, 0, 1):
-            parts.append(cube(f"{tag}Lid", size=(edge, floor_w, board_t),
+            parts.append(cube(f"{tag}Lid", size=(lid_w, floor_w, board_t),
                               loc=(0.0, i * floor_step, edge - board_t / 2),
                               color="wood_light"))
     return parts
@@ -178,11 +195,13 @@ def slatted_box(edge, rows, lid, tag="Crate", wood="wood", frame="wood_dark"):
 def build_fence_section():
     """One 2.4 m span of post-and-rail, origin at the span centre.
 
-    The span runs along +X and the geometry stops exactly on the span edges so
-    the game can chain sections end to end without a seam or an overlap.
+    The span runs along +X.  The rails stop exactly on the span edges and the
+    posts straddle them, so chaining sections at 2.4 m intervals lands each
+    section's end post exactly on its neighbour's -- one visually solid post
+    instead of a pair with a 5 cm slot between them.
     """
     parts = []
-    for x in (-1.1, 1.1):
+    for x in (-FENCE_SPAN / 2.0, FENCE_SPAN / 2.0):
         # A chamfered cap sheds rain in real life and, more usefully, gives the
         # post a lit top facet instead of a flat grey square.
         post = square_profile(
@@ -271,7 +290,11 @@ def build_trough():
     wall_z = leg_h + wall_h / 2.0
     parts = []
 
-    floor = cube("TroughFloor", size=(1.80, 0.55, 0.07), loc=(0.0, 0.0, leg_h + 0.035),
+    # The floor and the end boards are tucked *inside* the two side walls rather
+    # than being flush with them: flush would put the floor's side quad and the
+    # wall's outer quad on the same plane with the same normal, which z-fights
+    # the length of the trough.  The 0.03 m of remaining overlap still welds.
+    floor = cube("TroughFloor", size=(1.74, 0.50, 0.07), loc=(0.0, 0.0, leg_h + 0.035),
                  color="wood")
     paint(floor, "wood_dark", faces=select_faces(floor, lambda c, n: n.z > 0.8))
     parts.append(floor)
@@ -286,8 +309,13 @@ def build_trough():
         paint(wall, "wood_light", faces=select_faces(wall, lambda c, n: n.z > 0.8))
         parts.append(wall)
 
-    for x in (-0.87, 0.87):
-        end = cube("TroughEnd", size=(0.06, 0.55, wall_h), loc=(x, 0.0, wall_z), color="wood")
+    # The end boards are housed between the side walls the way a real plank
+    # trough is built -- 1.5 cm short of the wall ends, 2 cm proud of the rim,
+    # bottom buried in the floor board.  Every mating face is therefore inside
+    # solid geometry instead of sitting on a neighbour's plane.
+    for x in (-0.855, 0.855):
+        end = cube("TroughEnd", size=(0.06, 0.50, wall_h - 0.01),
+                   loc=(x, 0.0, wall_z + 0.025), color="wood")
         inward = -1.0 if x > 0 else 1.0
         paint(end, "wood_dark",
               faces=select_faces(end, lambda c, n, s=inward: n.x * s > 0.8))
@@ -387,9 +415,15 @@ def build_barrel():
     smooth(body, 50)
     paint(body, "wood_dark", faces=select_faces(body, lambda c, n: n.z < -0.8))
 
+    # Each hoop is a zero-thickness ribbon, so any part of it that falls inside
+    # the staves simply disappears.  The body tapers, therefore the hoops taper
+    # with it: body radius + 6 mm at both ends of every band, never a constant
+    # radius fighting a sloped wall.
     hoops = []
-    for radius, low, high in ((0.303, 0.10, 0.17), (0.332, 0.40, 0.47), (0.302, 0.69, 0.76)):
-        hoop = from_profile(f"Hoop{low}", [(radius, low), (radius, high)], segments=12,
+    for r_low, r_high, low, high in ((0.3024, 0.3124, 0.10, 0.17),
+                                     (0.3320, 0.3320, 0.40, 0.47),
+                                     (0.3133, 0.3037, 0.69, 0.76)):
+        hoop = from_profile(f"Hoop{low}", [(r_low, low), (r_high, high)], segments=12,
                             color="iron", family="Metal",
                             close_bottom=False, close_top=False)
         hoops.append(hoop)
@@ -474,6 +508,15 @@ def build_wheelbarrow():
     parts.append(cylinder("Hub", radius=0.06, depth=0.13, verts=6, loc=(0.0, -0.56, 0.22),
                           rot=(0.0, math.radians(90), 0.0), color="metal", family="Metal"))
 
+    # Without these the wheel is a disc hanging in a 0.20 m gap either side of
+    # the rails.  Two fork plates drop off the front of the chassis and a short
+    # axle spans between them, straight through the hub.
+    for sx in (-1.0, 1.0):
+        parts.append(cube("Fork", size=(0.05, 0.07, 0.30), loc=(sx * 0.30, -0.575, 0.30),
+                          color="wood_dark"))
+    parts.append(cylinder("Axle", radius=0.035, depth=0.64, verts=6, loc=(0.0, -0.56, 0.22),
+                          rot=(0.0, math.radians(90), 0.0), color="metal_dark", family="Metal"))
+
     # The handles are simply the back ends of the two chassis rails, which is how
     # a real barrow is built and saves two more boxes.
     rail_tilt = math.radians(12)
@@ -498,9 +541,11 @@ def build_signpost():
     """A chamfered post carrying an arrow board that points off to +X.
 
     The board's front face is a single flat 0.90 x 0.42 m quad painted in barn
-    trim white, sitting at local ``(0, -0.115, 1.35)`` with a 10 degree yaw --
+    trim white, sitting at local ``(0, -0.075, 1.35)`` with a 10 degree yaw --
     that is the surface the game projects its text decal onto, so the quad is
-    kept undivided and unbevelled.
+    kept undivided and unbevelled.  The offset is chosen so the board's *back*
+    face stays a clear 15 mm inside the post's front plane across the whole
+    yaw, rather than grazing it and shimmering at distance.
     """
     post = square_profile(
         "SignPost",
@@ -522,7 +567,7 @@ def build_signpost():
     board = from_points("SignBoard", verts, faces, color="wood")
     paint(board, "barn_trim",
           faces=select_faces(board, lambda c, n: n.y < -0.9 and c.x < half_w - 0.01))
-    place(board, loc=(0.0, -0.09, 1.35), rot=(0.0, 0.0, math.radians(10)))
+    place(board, loc=(0.0, -0.075, 1.35), rot=(0.0, 0.0, math.radians(10)))
 
     sign = join([post, board], "Signpost")
     flat(sign)
@@ -600,9 +645,12 @@ def build_scarecrow():
                           color="denim"))
 
     # Straw bursting from every cuff is the single detail that says "stuffed".
+    # cone() puts its point at local +Z, so the ankle pair needs rx = pi to aim
+    # the straw down out of the trouser hem instead of up inside the leg; the
+    # small ry then splays them outwards.
     for x, z, rx, ry in ((-0.70, 1.43, 0.0, -1.5), (-0.66, 1.36, 0.6, -1.3),
                          (0.70, 1.43, 0.0, 1.5), (0.66, 1.36, -0.6, 1.3),
-                         (-0.13, 0.34, 0.0, 0.25), (0.13, 0.34, 0.0, -0.25)):
+                         (-0.13, 0.27, math.pi, 0.25), (0.13, 0.27, math.pi, -0.25)):
         parts.append(cone("Straw", r1=0.055, r2=0.0, depth=0.22, verts=6, loc=(x, 0.0, z),
                           rot=(rx, ry, 0.0), color="straw_light"))
 
@@ -635,7 +683,12 @@ def build_scarecrow():
     crown = from_profile("HatCrown",
                          [(0.175, hat_z + 0.03), (0.165, hat_z + 0.15), (0.125, hat_z + 0.17)],
                          segments=10, color="straw_dark", close_bottom=False)
+    # from_profile builds its geometry at absolute Z with the object origin left
+    # at the world origin, so rotating the hat straight away would swing it about
+    # a point two metres below itself and fling it off the back of the head.
+    # Move the origin to the hat's own base first, then tilt.
     for piece in (brim, crown):
+        set_origin(piece, (0.0, 0.0, hat_z))
         place(piece, rot=(math.radians(-9), 0.0, 0.0))
         parts.append(piece)
 
@@ -664,7 +717,10 @@ def build_well():
           faces=select_faces(ring, lambda c, n: int(math.atan2(c.y, c.x) % math.tau / sector) % 2))
     parts.append(ring)
 
-    water = cylinder("Water", radius=0.605, depth=0.30, verts=12, loc=(0.0, 0.0, 0.0),
+    # Sits entirely above Z = 0 -- its top at 0.16 still plugs the shaft (whose
+    # wall stops at 0.10) but the model's bounding box no longer dips below its
+    # own origin, which would fight the game's ground-snapping.
+    water = cylinder("Water", radius=0.605, depth=0.16, verts=12, loc=(0.0, 0.0, 0.08),
                      color=shade("stone_dark", 0.25))
     paint(water, shade("sky", 0.30), faces=select_faces(water, lambda c, n: n.z > 0.8))
     parts.append(water)

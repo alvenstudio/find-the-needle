@@ -128,7 +128,14 @@ def preview_current(name, resolution=560, **kwargs):
 
 
 def preview_glb(name, resolution=560, **kwargs):
-    """Reimport an exported .glb and render it -- verifies what actually shipped."""
+    """Reimport an exported .glb and render it.
+
+    Note that Blender's glTF importer only wires the colour attribute of a
+    mesh's *first* primitive into its material, so a model built from several
+    surface families comes back partly white here even when the exported file is
+    correct. Use `build_and_sheet` from run.py for colour QA and keep this for
+    checking geometry, scale and pivots.
+    """
     for obj in list(bpy.context.scene.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     path = os.path.join(MODEL_DIR, f"{name}.glb")
@@ -147,17 +154,9 @@ def preview_many(names, resolution=560, **kwargs):
     return out
 
 
-def contact_sheet(names, out_name="sheet", cell=300, columns=None, **kwargs):
-    """Render each model and tile the results into one image for review."""
+def tile(rendered, out_name="sheet", cell=300, columns=None):
+    """Tile already-rendered previews into a single reviewable image."""
     import math as _math
-
-    rendered = []
-    for name in names:
-        try:
-            preview_glb(name, resolution=cell, **kwargs)
-            rendered.append(name)
-        except Exception as exc:
-            print(f"  preview failed for {name}: {exc}")
 
     if not rendered:
         return None
@@ -188,6 +187,18 @@ def contact_sheet(names, out_name="sheet", cell=300, columns=None, **kwargs):
     bpy.data.images.remove(sheet)
     print(f"contact sheet -> {path}  ({', '.join(rendered)})")
     return path
+
+
+def contact_sheet(names, out_name="sheet", cell=300, columns=None, **kwargs):
+    """Render each exported .glb and tile the results. Geometry QA only."""
+    rendered = []
+    for name in names:
+        try:
+            preview_glb(name, resolution=cell, **kwargs)
+            rendered.append(name)
+        except Exception as exc:
+            print(f"  preview failed for {name}: {exc}")
+    return tile(rendered, out_name=out_name, cell=cell, columns=columns)
 
 
 print("preview.py loaded -- preview_glb('straw') / contact_sheet([...])")

@@ -6,7 +6,7 @@ part, rigid weights, under a dozen bones -- because a chunky box animal has no
 soft tissue to deform and rigid weighting is the only scheme that cannot go
 subtly wrong at build time.
 
-Two conventions are worth knowing before reading the pose tables:
+Three conventions are worth knowing before reading the pose tables:
 
 * Every animal faces -Y (the camera direction once the exporter flips to Y-up)
   and stands on Z=0.
@@ -15,6 +15,13 @@ Two conventions are worth knowing before reading the pose tables:
   (pointing -Y) local X is pitch and local Z is yaw.  For the vertical root, leg
   and tail bones (pointing +/-Z) local Y runs along the bone, which is why
   :func:`lift` exists and why the cat's head yaw lives in the middle channel.
+  The hen's wing bones point +Y, so their middle channel is a rotation *about*
+  the bone -- which is a real flap only because the bone sits on the shoulder
+  line with the whole wing panel hanging below it.
+* Parts are laid out against each other's *chamfered* surfaces, not their boxes.
+  A one-segment bevel of width w pulls a surface back by up to w near an edge,
+  so neighbouring parts overlap by w plus a margin or they come apart in the
+  export.
 """
 
 import math
@@ -30,14 +37,15 @@ REST = (0.0, 0.0, 0.0)
 # Shape helpers
 # --------------------------------------------------------------------------
 def box(name, size, loc, rot_deg=(0.0, 0.0, 0.0), color=None, bevel_width=0.0,
-        bevel_segments=1):
+        bevel_segments=1, family="Prop"):
     """A cube whose rotation is given in degrees, with an optional bevel.
 
     Nearly every part of every animal is a rounded box, so taking degrees and
     beveling on request removes a lot of noise from the call sites.
     """
     obj = cube(name, size=size, loc=loc,
-               rot=tuple(math.radians(a) for a in rot_deg), color=color)
+               rot=tuple(math.radians(a) for a in rot_deg), color=color,
+               family=family)
     if bevel_width > 0.0:
         bevel(obj, bevel_width, bevel_segments)
     return obj
@@ -124,6 +132,26 @@ def frames(seconds):
     return 1 + int(round(seconds * FPS))
 
 
+def purge_actions():
+    """Delete *every* action in the file, fake user and all.
+
+    :func:`add_action` marks its actions with a fake user so nothing garbage
+    collects them mid-build, which also means ``clear_scene()`` cannot reclaim
+    them: it only removes datablocks with ``users == 0`` and a fake user counts.
+    Purging by name alone is not enough either.  The glTF exporter, handed a
+    file with exactly one armature, collects every action in ``bpy.data`` whose
+    channels resolve against that rig -- and "Eat"/"Peck" key "neck"/"head"/
+    "body", bone names the hen, the cat and the crow all have too.  So a
+    surviving cow action does not merely rename the next animal's "Idle" to
+    "Idle.001", it ships a bogus extra clip inside chicken.glb.
+
+    Call this once per builder, before the first :func:`add_action`.
+    """
+    for action in list(bpy.data.actions):
+        action.use_fake_user = False
+        bpy.data.actions.remove(action)
+
+
 def add_action(rig, name, last_frame, tracks):
     """Key one looping action from ``{bone: [(frame, rot_deg[, location])]}``.
 
@@ -132,8 +160,8 @@ def add_action(rig, name, last_frame, tracks):
     needs and that are invisible in a viewport: every track spans the whole
     range, and its last key restates its first.
     """
-    # clear_scene() cannot reclaim a fake-user action, so a previous animal's
-    # "Idle" would otherwise push this one's name to "Idle.001".
+    # Belt and braces on top of purge_actions(): a name reused inside a single
+    # builder would otherwise silently become "Idle.001".
     stale = bpy.data.actions.get(name)
     if stale is not None:
         stale.use_fake_user = False
@@ -226,23 +254,50 @@ def cow_parts():
     ]):
         parts.append((box(f"CowPatch{index}", size, loc, color="cow_spot"), "spine"))
 
+    # She is a dairy cow wearing a dairy cow's bell, so she gets an udder: a
+    # lathed sac tucked 2 cm up into the belly, well inboard of the hind legs.
+    udder = from_profile(
+        "CowUdder",
+        [(0.055, 0.0), (0.10, 0.045), (0.12, 0.10), (0.115, 0.16), (0.10, 0.20)],
+        segments=8, color="cow_nose",
+    )
+    place(udder, loc=(0.0, 0.26, 0.44))
+    smooth(udder, 40)
+    parts.append((udder, "spine"))
+    # Four teats, apex-down, their bases 3 cm inside the sac's widest ring.
+    for dx in (-0.035, 0.035):
+        for dy in (-0.04, 0.04):
+            teat = cone("CowTeat", r1=0.022, r2=0.0, depth=0.09, verts=6,
+                        loc=(dx, 0.26 + dy, 0.425), rot=(math.pi, 0.0, 0.0),
+                        color="cow_nose")
+            parts.append((teat, "spine"))
+
     neck = box("CowNeck", (0.42, 0.34, 0.48), (0.0, -0.60, 1.14), color="cow_hide",
                bevel_width=0.04)
     parts.append((neck, "neck"))
 
-    collar = torus("CowCollar", major=0.245, minor=0.045, major_seg=10, minor_seg=4,
-                   loc=(0.0, -0.62, COW_NECK_Z), rot=(math.radians(90), 0.0, 0.0),
-                   color="barn_red")
-    smooth(collar, 40)
+    # A torus cannot ring a box neck.  This neck's surface is 0.21 from the axis
+    # on the flat faces but 0.318 at the corners, so any tube narrow enough to
+    # touch the flats is completely buried around all four corners and renders
+    # as four floating arcs.  A chunky band that simply encloses the neck's
+    # cross-section and stands 2 cm proud of it reads as a collar from every
+    # angle and costs 68 fewer triangles than the torus did.
+    collar = box("CowCollar", (0.46, 0.12, 0.52), (0.0, -0.62, 1.14),
+                 color="barn_red", bevel_width=0.02)
     parts.append((collar, "neck"))
 
+    # The profile deliberately starts at a small radius rather than at 0.0:
+    # kit's from_profile winds a *bottom* apex fan the same way as a top one,
+    # which is inside-out, and the resulting flipped tris punch a hole in the
+    # bell under front-face culling.  Starting at 0.045 lets close_bottom cap it
+    # with rings[0][::-1] instead, which is wound correctly.
     bell = from_profile(
         "CowBell",
-        [(0.0, 0.0), (0.085, 0.02), (0.085, 0.055), (0.05, 0.10), (0.03, 0.125),
+        [(0.045, 0.0), (0.085, 0.02), (0.085, 0.055), (0.05, 0.10), (0.03, 0.125),
          (0.0, 0.13)],
-        segments=8, color="gold",
+        segments=8, color="gold", family="Metal",
     )
-    place(bell, loc=(0.0, -0.66, 0.73))
+    place(bell, loc=(0.0, -0.62, 0.78))  # top 3 cm buried in the collar band
     smooth(bell, 40)
     parts.append((bell, "neck"))
 
@@ -257,8 +312,13 @@ def cow_parts():
     parts.append((muzzle, "head"))
 
     for side in (1.0, -1.0):
-        parts.append((box("CowEye", (0.10, 0.10, 0.12), (side * 0.19, -1.08, 1.28),
+        # The eye wraps the head's front-side corner instead of hiding on the
+        # flank: 3.5 cm of it is proud in x and it stays visible head-on, which
+        # is the angle a first-person player meets the cow from.
+        parts.append((box("CowEye", (0.08, 0.09, 0.10), (side * 0.215, -1.105, 1.28),
                           color="black"), "head"))
+        parts.append((box("CowGlint", (0.034, 0.034, 0.034),
+                          (side * 0.228, -1.145, 1.305), color="white"), "head"))
         parts.append((box("CowEar", (0.24, 0.14, 0.06), (side * 0.30, -0.92, 1.30),
                           rot_deg=(0.0, side * 20.0, 0.0), color="cow_hide"), "head"))
         horn = cone("CowHorn", r1=0.055, r2=0.0, depth=0.18, verts=6,
@@ -271,13 +331,17 @@ def cow_parts():
     parts.append((box("CowTuft", (0.14, 0.14, 0.18), (0.0, 0.735, 0.70),
                       color="cow_spot"), "tail"))
 
-    for bone, (x, y) in [
-        ("leg_fl", COW_SHOULDER),
-        ("leg_fr", (-COW_SHOULDER[0], COW_SHOULDER[1])),
-        ("leg_bl", COW_HIP),
-        ("leg_br", (-COW_HIP[0], COW_HIP[1])),
+    # knee_dy pushes the joint block forward on the front legs and back on the
+    # hind ones, which is enough to read as a knee and a hock in silhouette.
+    for bone, (x, y), knee_dy in [
+        ("leg_fl", COW_SHOULDER, -0.02),
+        ("leg_fr", (-COW_SHOULDER[0], COW_SHOULDER[1]), -0.02),
+        ("leg_bl", COW_HIP, 0.03),
+        ("leg_br", (-COW_HIP[0], COW_HIP[1]), 0.03),
     ]:
         parts.append((box(f"CowLeg_{bone}", (0.20, 0.21, 0.52), (x, y, 0.38),
+                          color="cow_hide"), bone))
+        parts.append((box(f"CowKnee_{bone}", (0.225, 0.24, 0.14), (x, y + knee_dy, 0.36),
                           color="cow_hide"), bone))
         parts.append((box(f"CowHoof_{bone}", (0.22, 0.23, 0.14), (x, y, 0.07),
                           color="cow_spot"), bone))
@@ -290,6 +354,7 @@ def build_cow():
     smooth(mesh, 38)
     set_origin(mesh, (0.0, 0.0, 0.0))
     rig = make_rig("CowRig", COW_BONES, mesh)
+    purge_actions()
 
     idle_end = frames(4.0)
     add_action(rig, "Idle", idle_end, {
@@ -307,10 +372,13 @@ def build_cow():
                  (80, (0.0, 0.0, 4.0)), (idle_end, REST)],
     })
 
-    # Spine 4 + neck 60 + head 26 puts the muzzle a hand's width above the grass.
-    # Leaning further would curl the head back up again: the neck-to-nose reach
-    # is 0.78 m from a pivot at 1.12 m, so 90 degrees of total pitch is as low as
-    # this cow gets without splaying its front legs.
+    # Spine 4 + neck 60 + head 26 chained through the actual bone heads puts the
+    # muzzle's front-bottom corner at z = 0.175 m -- that is this rig's floor,
+    # not a hand's width above the grass.  Leaning further curls the head back
+    # up again: the neck-to-nose reach is 0.78 m from a pivot at 1.12 m, so 90
+    # degrees of total pitch is as low as the cow gets without splaying her
+    # front legs.  Whoever tunes the grass scatter should aim at ~0.18 m, not
+    # ~0.10 m.
     eat_end = frames(3.0)
     add_action(rig, "Eat", eat_end, {
         "spine": [(1, REST), (20, (-4.0, 0.0, 0.0)), (56, (-4.0, 0.0, 0.0)),
@@ -334,7 +402,9 @@ def build_cow():
     })
 
     report(mesh)
-    export_glb(rig, "cow", animated=True)
+    # Both objects, so export_glb's face tally counts the mesh instead of
+    # printing "(0 faces)" for the armature and hiding a budget regression.
+    export_glb([rig, mesh], "cow", animated=True)
 
 
 # --------------------------------------------------------------------------
@@ -343,6 +413,7 @@ def build_cow():
 CHICKEN_BODY = (0.0, 0.02, 0.22)
 CHICKEN_NECK_Z = 0.32
 CHICKEN_FOOT_X = 0.062
+CHICKEN_WING_Z = 0.30   # the shoulder line: the wing panel hangs entirely below it
 
 CHICKEN_BONES = [
     ("root", (0.0, 0.0, 0.0), (0.0, 0.0, 0.10), None),
@@ -351,8 +422,12 @@ CHICKEN_BONES = [
     ("head", (0.0, -0.15, CHICKEN_NECK_Z), (0.0, -0.24, CHICKEN_NECK_Z), "neck"),
     ("leg_l", (CHICKEN_FOOT_X, 0.005, 0.115), (CHICKEN_FOOT_X, 0.005, 0.005), "root"),
     ("leg_r", (-CHICKEN_FOOT_X, 0.005, 0.115), (-CHICKEN_FOOT_X, 0.005, 0.005), "root"),
-    ("wing_l", (0.105, -0.06, 0.245), (0.105, 0.10, 0.245), "body"),
-    ("wing_r", (-0.105, -0.06, 0.245), (-0.105, 0.10, 0.245), "body"),
+    # A +Y bone's middle pose channel rotates about the bone's own length.  On
+    # the shoulder line that is a flap; through the middle of the panel (where
+    # these bones used to sit) it was only a twist that buried the wing's top
+    # edge in the body while swinging the bottom edge out.
+    ("wing_l", (0.105, -0.06, CHICKEN_WING_Z), (0.105, 0.10, CHICKEN_WING_Z), "body"),
+    ("wing_r", (-0.105, -0.06, CHICKEN_WING_Z), (-0.105, 0.10, CHICKEN_WING_Z), "body"),
 ]
 
 
@@ -391,8 +466,10 @@ def chicken_parts():
         parts.append((box("HenWing", (0.045, 0.185, 0.13), (side * 0.115, 0.03, 0.235),
                           rot_deg=(0.0, -side * 6.0, 0.0), color="straw_grey",
                           bevel_width=0.02), wing_bone))
-        parts.append((box("HenShank", (0.032, 0.032, 0.115),
-                          (side * CHICKEN_FOOT_X, 0.005, 0.0575), color="gold"),
+        # The shank starts at the foot's mid-height so the two do not share a
+        # coplanar underside and z-fight.
+        parts.append((box("HenShank", (0.032, 0.032, 0.101),
+                          (side * CHICKEN_FOOT_X, 0.005, 0.0645), color="gold"),
                       leg_bone))
         parts.append((box("HenFoot", (0.075, 0.11, 0.028),
                           (side * CHICKEN_FOOT_X, -0.03, 0.014), color="gold"),
@@ -410,9 +487,11 @@ def build_chicken():
     smooth(mesh, 38)
     set_origin(mesh, (0.0, 0.0, 0.0))
     rig = make_rig("HenRig", CHICKEN_BONES, mesh)
+    purge_actions()
 
     # The wings hold a small resting flare, so their loops return to that rather
-    # than to zero.
+    # than to zero.  Negative on the left, positive on the right, both swinging
+    # the panel's lower edge away from the body.
     wing_rest_l, wing_rest_r = (0.0, -2.0, 0.0), (0.0, 2.0, 0.0)
 
     idle_end = frames(2.0)
@@ -448,7 +527,7 @@ def build_chicken():
     })
 
     report(mesh)
-    export_glb(rig, "chicken", animated=True)
+    export_glb([rig, mesh], "chicken", animated=True)
 
 
 # --------------------------------------------------------------------------
@@ -482,16 +561,19 @@ def cat_parts():
     parts.append((torso, "body"))
 
     # Tabby banding, laid on the tilted back plane rather than painted, so the
-    # stripes stay narrow instead of swallowing a whole face.
+    # stripes stay narrow instead of swallowing a whole face.  The torso's 0.04
+    # bevel leaves only +/-0.0375 of flat back face across and +/-0.06 along, so
+    # the stripes are cut to fit inside that window: any wider and their ends
+    # would float clear of the rounded edges as free-standing tabs.
     tilt = math.radians(CAT_TILT)
     outward = (0.0, math.cos(tilt), math.sin(tilt))
     along = (0.0, -math.sin(tilt), math.cos(tilt))
-    for index, offset in enumerate((-0.055, 0.005, 0.065)):
+    for index, offset in enumerate((-0.045, 0.0, 0.045)):
         loc = tuple(CAT_TORSO[axis]
-                    + outward[axis] * (CAT_TORSO_HALF_DEPTH + 0.008)
+                    + outward[axis] * (CAT_TORSO_HALF_DEPTH + 0.001)
                     + along[axis] * offset
                     for axis in range(3))
-        parts.append((box(f"CatStripe{index}", (0.15, 0.02, 0.024), loc,
+        parts.append((box(f"CatStripe{index}", (0.085, 0.014, 0.024), loc,
                           rot_deg=(CAT_TILT, 0.0, 0.0), color="copper"), "body"))
 
     head = box("CatHead", (0.15, 0.14, 0.13), (0.0, -0.045, 0.36), color="pumpkin",
@@ -503,14 +585,19 @@ def cat_parts():
     parts.append((muzzle, "head"))
 
     for side in (1.0, -1.0):
-        ear = cone("CatEar", r1=0.05, r2=0.0, depth=0.075, verts=4,
-                   loc=(side * 0.052, -0.02, 0.44),
+        # r1 0.038 at |x| 0.040 keeps the whole base square inside the head's
+        # 0.075 half-width once the 12-degree cant is applied; the extra depth
+        # buys the height back so the ear still spikes 5.7 cm above the skull.
+        ear = cone("CatEar", r1=0.038, r2=0.0, depth=0.085, verts=4,
+                   loc=(side * 0.040, -0.02, 0.44),
                    rot=(0.0, math.radians(side * 12.0), 0.0), color="pumpkin")
         parts.append((ear, "head"))
         parts.append((box("CatEye", (0.03, 0.022, 0.032), (side * 0.045, -0.112, 0.375),
                           color="leaf"), "head"))
         # The forelegs ride the root: they are rigid pillars holding the cat up.
-        parts.append((box("CatForeleg", (0.055, 0.06, 0.20), (side * 0.048, -0.075, 0.10),
+        # The leg starts at the paw's mid-height so their undersides are not
+        # coplanar.
+        parts.append((box("CatForeleg", (0.055, 0.06, 0.178), (side * 0.048, -0.075, 0.111),
                           color="pumpkin"), "root"))
         parts.append((box("CatPaw", (0.062, 0.085, 0.045), (side * 0.048, -0.10, 0.0225),
                           color="white"), "root"))
@@ -534,6 +621,7 @@ def build_cat():
     smooth(mesh, 38)
     set_origin(mesh, (0.0, 0.0, 0.0))
     rig = make_rig("CatRig", CAT_BONES, mesh)
+    purge_actions()
 
     # The three tail bones run the same sway a few frames apart, which turns a
     # rigid chain into a travelling wave.
@@ -554,49 +642,62 @@ def build_cat():
     })
 
     report(mesh)
-    export_glb(rig, "cat", animated=True)
+    export_glb([rig, mesh], "cat", animated=True)
 
 
 # --------------------------------------------------------------------------
 # Crow
 # --------------------------------------------------------------------------
+# Built at true crow scale: 0.48 m beak to tail tip, 0.395 m to the crown.  The
+# earlier bird was 0.30 m long and read as a blackbird next to a 1.75 m player.
+# It is only ~200 triangles, so the extra size is free.
 CROW_BONES = [
-    ("root", (0.0, 0.02, 0.0), (0.0, 0.02, 0.09), None),
-    ("body", (0.0, 0.09, 0.155), (0.0, -0.04, 0.155), "root"),
-    ("head", (0.0, -0.04, 0.235), (0.0, -0.12, 0.235), "body"),
-    ("tail", (0.0, 0.09, 0.16), (0.0, 0.19, 0.145), "body"),
+    ("root", (0.0, 0.027, 0.0), (0.0, 0.027, 0.12), None),
+    ("body", (0.0, 0.12, 0.255), (0.0, -0.05, 0.255), "root"),
+    ("head", (0.0, -0.05, 0.335), (0.0, -0.16, 0.335), "body"),
+    ("tail", (0.0, 0.12, 0.25), (0.0, 0.25, 0.225), "body"),
 ]
 
 
 def crow_parts():
-    """Every mesh piece of the crow paired with the bone that owns it."""
+    """Every mesh piece of the crow paired with the bone that owns it.
+
+    Every overlap here is measured against the neighbour's *chamfered* surface.
+    The body's 0.035 bevel pulls its underside up to z ~0.19 out at the legs, so
+    the legs run 3.5 cm past that; the head buries a 7 x 6 cm block of itself in
+    the body rather than sharing a corner the two chamfers would eat; and the
+    wings' inner faces sit 1.5 cm inside the body's side at their lowest point.
+    """
     parts = []
 
-    parts.append((box("CrowBody", (0.10, 0.18, 0.115), (0.0, 0.015, 0.155),
-                      color="black", bevel_width=0.03), "body"))
-    parts.append((box("CrowHead", (0.085, 0.085, 0.08), (0.0, -0.085, 0.245),
-                      color="black", bevel_width=0.025), "head"))
+    parts.append((box("CrowBody", (0.135, 0.245, 0.16), (0.0, 0.022, 0.255),
+                      color="black", bevel_width=0.035), "body"))
+    parts.append((box("CrowHead", (0.12, 0.12, 0.12), (0.0, -0.088, 0.335),
+                      color="black", bevel_width=0.03), "head"))
 
-    beak = cone("CrowBeak", r1=0.028, r2=0.0, depth=0.075, verts=4,
-                loc=(0.0, -0.155, 0.24), rot=(math.radians(90), 0.0, 0.0),
+    beak = cone("CrowBeak", r1=0.035, r2=0.0, depth=0.10, verts=4,
+                loc=(0.0, -0.175, 0.33), rot=(math.radians(90), 0.0, 0.0),
                 color="metal_dark")
     parts.append((beak, "head"))
 
     for side in (1.0, -1.0):
         # "black" has no lighter sibling in the palette, so the wing sheen is a
         # brightened version of it rather than an invented hue.
-        wing = box("CrowWing", (0.022, 0.14, 0.075), (side * 0.052, 0.02, 0.16),
+        wing = box("CrowWing", (0.03, 0.19, 0.09), (side * 0.065, 0.027, 0.25),
                    rot_deg=(0.0, -side * 5.0, 0.0), color="black")
         repaint(wing, shade("black", 1.9), lambda c, n: n.x * side > 0.8)
         parts.append((wing, "body"))
-        parts.append((box("CrowEye", (0.018, 0.018, 0.02), (side * 0.036, -0.115, 0.255),
+        # The eye rides the side of the skull, where a corvid's eye actually is
+        # and where it stays proud of the chamfer instead of sinking into the
+        # rounded front corner.
+        parts.append((box("CrowEye", (0.026, 0.028, 0.028), (side * 0.055, -0.108, 0.345),
                           color="straw_light"), "head"))
-        parts.append((box("CrowLeg", (0.018, 0.018, 0.09), (side * 0.035, 0.02, 0.045),
+        parts.append((box("CrowLeg", (0.024, 0.024, 0.214), (side * 0.047, 0.027, 0.118),
                           color="metal_dark"), "root"))
-        parts.append((box("CrowClaw", (0.026, 0.06, 0.016), (side * 0.035, -0.005, 0.008),
+        parts.append((box("CrowClaw", (0.035, 0.081, 0.022), (side * 0.047, -0.007, 0.011),
                           color="metal_dark"), "root"))
 
-    parts.append((box("CrowTail", (0.075, 0.12, 0.02), (0.0, 0.135, 0.152),
+    parts.append((box("CrowTail", (0.10, 0.16, 0.027), (0.0, 0.18, 0.245),
                       rot_deg=(12.0, 0.0, 0.0), color="black"), "tail"))
     return parts
 
@@ -607,12 +708,13 @@ def build_crow():
     smooth(mesh, 38)
     set_origin(mesh, (0.0, 0.0, 0.0))
     rig = make_rig("CrowRig", CROW_BONES, mesh)
+    purge_actions()
 
     # Four-frame snaps between long holds -- birds do not ease into a look.
     idle_end = frames(3.0)
     add_action(rig, "Idle", idle_end, {
-        "root": [(1, REST, lift(0.0)), (12, REST, lift(0.004)), (44, REST, lift(0.0)),
-                 (48, REST, lift(0.005)), (idle_end, REST, lift(0.0))],
+        "root": [(1, REST, lift(0.0)), (12, REST, lift(0.005)), (44, REST, lift(0.0)),
+                 (48, REST, lift(0.007)), (idle_end, REST, lift(0.0))],
         "body": [(1, REST), (36, (2.0, 0.0, 0.0)), (idle_end, REST)],
         "head": [(1, REST), (8, REST), (12, (0.0, 0.0, 30.0)), (26, (0.0, 0.0, 30.0)),
                  (30, (-8.0, 0.0, 4.0)), (40, (-8.0, 0.0, 4.0)), (44, (0.0, 0.0, -26.0)),
@@ -622,7 +724,7 @@ def build_crow():
     })
 
     report(mesh)
-    export_glb(rig, "crow", animated=True)
+    export_glb([rig, mesh], "crow", animated=True)
 
 
 BUILDERS = {
@@ -636,5 +738,6 @@ BUILDERS = {
 def build_all():
     for name, fn in BUILDERS.items():
         clear_scene()
+        purge_actions()  # fake-user actions outlive clear_scene(); see purge_actions
         print(f"[animals] {name}")
         fn()

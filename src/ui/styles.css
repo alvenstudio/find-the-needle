@@ -1,0 +1,2805 @@
+/* =========================================================================
+   Find the Needle - UI stylesheet
+   =========================================================================
+
+   The whole interface is one overlay stacked on top of the WebGL canvas, so
+   this file has three jobs and only three:
+
+     1. Own the design tokens. Every colour, radius, shadow and duration in
+        the game comes from a custom property on `:root`. Nothing downstream
+        hard-codes a hex value, which is what makes a late "the gold is too
+        acidic" note a one-line change instead of a search-and-replace.
+     2. Stay out of the renderer's way. The overlay never paints a full-screen
+        blur or filter while the game is running, transitions are limited to
+        `transform`/`opacity` (compositor-only), and nothing here animates a
+        property that triggers layout.
+     3. Read as a physical object. Panels are cream card stock with a warm
+        border and a chunky drop shadow; buttons have a solid bottom lip that
+        compresses when pressed. That tactility is the entire visual thesis -
+        a friendly children's-book farm, not a dashboard.
+
+   HOUSE RULES
+   -----------
+   * No webfonts. Zero network requests from CSS: no `@import`, no
+     `url(https://...)`. The rounded system stack is close enough to the
+     intended voice on every platform that matters and costs nothing.
+   * No `!important` anywhere except the single, commented, reduced-motion
+     accessibility block at the very bottom.
+   * Motion is expressed as named `ftn-*` keyframes so JS can replay an
+     animation by toggling a class instead of writing styles per frame.
+   ========================================================================= */
+
+/* -------------------------------------------------------------- tokens -- */
+
+:root {
+  /* --- palette -----------------------------------------------------------
+     Warm farmyard: sun-bleached straw, painted barn timber, spring grass,
+     and a deep brown that stands in for black everywhere. True black is
+     never used - it reads as a hole punched in a sunny picture. */
+  --c-straw: #e8c46d;
+  --c-straw-light: #f6dd9e;
+  --c-straw-deep: #d3a742;
+  --c-straw-dark: #a9781f;
+
+  --c-barn: #e0555f;
+  --c-barn-light: #f08c93;
+  --c-barn-deep: #c23a45;
+  --c-barn-dark: #93262f;
+
+  --c-grass: #6fbf3f;
+  --c-grass-light: #9ada72;
+  --c-grass-deep: #529c2a;
+  --c-grass-dark: #3b761c;
+
+  --c-sky: #7ec8f2;
+  --c-sky-light: #b6e2fb;
+  --c-sky-deep: #4a9fd4;
+  --c-sky-dark: #2f7cad;
+
+  /* Ink: the brown that replaces black. Four steps so that "muted" text is
+     still a real colour with real contrast, never 50% opacity. */
+  --c-ink: #3b2a1c;
+  --c-ink-soft: #6b5442;
+  --c-ink-faint: #8d7360;
+  --c-ink-line: #5a4030;
+
+  /* Paper: the card stock. Three steps for card face, inset wells and
+     disabled surfaces. */
+  --c-paper: #fff8ea;
+  --c-paper-2: #fdeed2;
+  --c-paper-3: #f2ddb7;
+  --c-paper-4: #e4cba0;
+
+  /* Semantic aliases. Components reference these, not the raw palette, so a
+     "gold means currency" decision can be revisited in one place. */
+  --c-accent: var(--c-straw);
+  --c-good: var(--c-grass);
+  --c-bad: var(--c-barn);
+  --c-info: var(--c-sky);
+  --c-surface: var(--c-paper);
+  --c-surface-sunk: var(--c-paper-3);
+  --c-text: var(--c-ink);
+  --c-text-muted: var(--c-ink-soft);
+  --c-text-dim: var(--c-ink-faint);
+  --c-border: var(--c-ink-line);
+
+  /* Scrim behind modals. Brown rather than grey so the world underneath
+     stays warm instead of turning to newsprint. */
+  --c-scrim: rgba(46, 31, 19, 0.52);
+
+  /* --- rarity ------------------------------------------------------------
+     Two values per band: `-hue` is the saturated colour used for glows,
+     borders and 3D-side tinting (it matches RARITY_COLORS in Content.ts so
+     the world and the UI agree), `-ink` is the darkened variant that is
+     actually legible as text on cream paper. Painting text with the hue
+     directly is how "common" ends up invisible. */
+  --rar-common-hue: #cfd6dd;
+  --rar-common-ink: #6f7b86;
+  --rar-common-glow: rgba(147, 163, 178, 0.5);
+
+  --rar-uncommon-hue: #6ddf7a;
+  --rar-uncommon-ink: #3a8f45;
+  --rar-uncommon-glow: rgba(90, 200, 105, 0.55);
+
+  --rar-rare-hue: #59b3ff;
+  --rar-rare-ink: #2478bd;
+  --rar-rare-glow: rgba(70, 160, 235, 0.55);
+
+  --rar-epic-hue: #c07bff;
+  --rar-epic-ink: #7c3ec2;
+  --rar-epic-glow: rgba(170, 100, 240, 0.55);
+
+  --rar-legendary-hue: #ffc23d;
+  --rar-legendary-ink: #a86f08;
+  --rar-legendary-glow: rgba(255, 180, 40, 0.65);
+
+  /* --- type --------------------------------------------------------------
+     A rounded system stack. `ui-rounded` picks up SF Rounded on Apple
+     platforms, "Segoe UI Variable" is the friendly Windows 11 face, Nunito
+     covers anyone who happens to have it, then generic fallbacks. Nothing is
+     downloaded; every name here is either a generic family or a face the OS
+     already ships. */
+  --font-ui: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display",
+    "Segoe UI Variable", "Nunito", "Varela Round", "Trebuchet MS", system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Numbers that do not jitter while a counter tweens. */
+  --font-num: var(--font-ui);
+
+  /* Fluid type. The min values are tuned for a 380px phone, the max for a
+     desktop monitor; the viewport term is deliberately gentle so a 4K screen
+     does not end up with billboard text. */
+  --t-xs: clamp(0.6875rem, 0.66rem + 0.15vw, 0.78rem);
+  --t-sm: clamp(0.78rem, 0.74rem + 0.2vw, 0.9rem);
+  --t-md: clamp(0.9rem, 0.85rem + 0.28vw, 1.05rem);
+  --t-lg: clamp(1.05rem, 0.97rem + 0.4vw, 1.28rem);
+  --t-xl: clamp(1.25rem, 1.1rem + 0.7vw, 1.65rem);
+  --t-2xl: clamp(1.55rem, 1.3rem + 1.2vw, 2.3rem);
+  --t-3xl: clamp(2rem, 1.4rem + 3vw, 3.6rem);
+  --t-display: clamp(2.6rem, 1.6rem + 5.5vw, 5.5rem);
+
+  --w-regular: 500;
+  --w-medium: 600;
+  --w-bold: 800;
+  --w-black: 900;
+
+  --lh-tight: 1.12;
+  --lh-body: 1.45;
+
+  /* --- space -------------------------------------------------------------
+     A 4px base scale. Panel padding uses the mid steps; the overlay gutter
+     is its own token because it also has to absorb device safe areas. */
+  --s0: 0.125rem; /*  2px */
+  --s1: 0.25rem; /*   4px */
+  --s2: 0.375rem; /*  6px */
+  --s3: 0.5rem; /*    8px */
+  --s4: 0.75rem; /*  12px */
+  --s5: 1rem; /*     16px */
+  --s6: 1.25rem; /*  20px */
+  --s7: 1.75rem; /*  28px */
+  --s8: 2.25rem; /*  36px */
+  --s9: 3rem; /*     48px */
+  --gutter: clamp(0.625rem, 0.35rem + 1.4vw, 1.25rem);
+
+  /* --- shape -------------------------------------------------------------
+     Generous rounding is most of the "cozy". Nothing in the kit is square
+     except the progress-meter inner fill, which is clipped by its track. */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-2xl: 28px;
+  --r-pill: 999px;
+
+  --bw: 3px; /* standard panel/button border */
+  --bw-thick: 4px; /* hero surfaces: title card, celebration */
+
+  /* --- elevation ---------------------------------------------------------
+     Two components per shadow: a hard offset "board thickness" in warm brown
+     and a soft ambient pool. Together they read as painted plywood props
+     lying on a table rather than floating glass. */
+  --sh-1: 0 2px 0 rgba(90, 64, 48, 0.28), 0 3px 8px rgba(90, 64, 48, 0.18);
+  --sh-2: 0 4px 0 rgba(90, 64, 48, 0.3), 0 8px 18px rgba(90, 64, 48, 0.22);
+  --sh-3: 0 7px 0 rgba(90, 64, 48, 0.32), 0 16px 34px rgba(90, 64, 48, 0.3);
+  --sh-4: 0 10px 0 rgba(90, 64, 48, 0.34), 0 28px 60px rgba(70, 48, 32, 0.42);
+  /* The thin white line along the top edge of every card - the single cheap
+     trick that sells "this is a physical object catching the sun". */
+  --sh-top: inset 0 2px 0 rgba(255, 255, 255, 0.75);
+  /* Inset wells (meter tracks, scroll areas, list backgrounds). */
+  --sh-well: inset 0 2px 4px rgba(90, 64, 48, 0.22);
+  /* The pressable lip on buttons; see the .btn block for how it collapses. */
+  --lip: 4px;
+
+  /* --- motion ------------------------------------------------------------
+     Durations are short: this is a HUD sitting over a 60fps scene, and any
+     transition longer than ~250ms starts to feel like input lag. */
+  --dur-1: 90ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --dur-4: 400ms;
+  --dur-pop: 340ms;
+  --dur-float: 1100ms;
+  --dur-toast: 260ms;
+  --ease-out: cubic-bezier(0.22, 0.68, 0.32, 1);
+  --ease-in: cubic-bezier(0.6, 0, 0.85, 0.4);
+  /* Overshoots slightly - the bounce that makes a panel feel like it landed
+     rather than faded in. */
+  --ease-back: cubic-bezier(0.18, 1.4, 0.42, 1);
+
+  /* --- layers ------------------------------------------------------------
+     Declared once, in narrative order: the world, the readouts on top of it,
+     things that interrupt, and finally the two screens that own the frame
+     entirely (loading, and the needle celebration). */
+  --z-world: 0;
+  --z-hud: 10;
+  --z-prompt: 20;
+  --z-popup: 30;
+  --z-toast: 40;
+  --z-modal: 50;
+  --z-pause: 60;
+  --z-celebrate: 70;
+  --z-loading: 80;
+
+  /* Hit target floor. Anything the player taps on a phone respects this. */
+  --tap: 44px;
+
+  color-scheme: light;
+}
+
+/* ---------------------------------------------------------------- base -- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+  font-weight: var(--w-medium);
+  line-height: var(--lh-body);
+  color: var(--c-text);
+  background: var(--c-sky);
+  /* The canvas owns the whole viewport; nothing should ever rubber-band or
+     select. `overscroll-behavior` stops mobile pull-to-refresh from firing
+     mid-dig. */
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-world);
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The pointer-lock surface. Touch scrolling must never steal a drag. */
+  touch-action: none;
+}
+
+/* The overlay root. Transparent to the mouse by default so a click lands on
+   the canvas and grabs pointer lock; each panel opts back in. This one rule
+   is why the whole UI can stay mounted while the player is digging. */
+#ui {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-hud);
+  overflow: hidden;
+  font-family: var(--font-ui);
+  pointer-events: none;
+  /* Text in the overlay is never selectable - a double-click while aiming
+     should not highlight the HUD. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Every interactive surface re-enables hit testing through this class or by
+   naming itself below. Keeping the list explicit makes it obvious when a new
+   panel forgets and mysteriously ignores clicks. */
+.ui-interactive,
+.panel,
+.btn,
+.chip,
+.toast,
+.modal-scrim,
+.pause,
+.celebrate,
+.loading,
+.title {
+  pointer-events: auto;
+}
+
+/* Layers that must stay transparent even though they contain live content. */
+.ui-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+/* --------------------------------------------------------- typography -- */
+
+.u-display {
+  font-size: var(--t-display);
+  font-weight: var(--w-black);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.015em;
+}
+
+.u-title {
+  font-size: var(--t-xl);
+  font-weight: var(--w-black);
+  line-height: var(--lh-tight);
+}
+
+.u-label {
+  font-size: var(--t-xs);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+}
+
+.u-muted {
+  color: var(--c-text-muted);
+}
+
+.u-dim {
+  color: var(--c-text-dim);
+}
+
+/* Tabular figures everywhere a number changes in place, so a tweening
+   counter does not shuffle the layout of the chip next to it. */
+.u-num,
+.chip__value,
+.meter__text,
+.shop-row__cost,
+.quest__count,
+.cell__count,
+.celebrate__stat-value {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* The doubled selector raises specificity to (0,2,0) so `.u-hidden` still
+   wins against a component's own `display` (`.modal__footer { display: flex }`
+   is declared later in the file and would otherwise beat a single class at
+   equal specificity). Cheaper than reordering the file, and honest about
+   what it is doing - which is the whole reason it is not an `!important`. */
+.u-hidden,
+.u-hidden.u-hidden {
+  display: none;
+}
+
+/* Same problem, same fix, for the native `hidden` attribute: the UA rule
+   `[hidden] { display: none }` loses to any author class selector, and the
+   pooled widgets park recycled nodes with `node.hidden = true`. */
+.popup[hidden],
+.toast[hidden],
+.chip[hidden],
+.panel[hidden],
+.btn[hidden],
+.prompt[hidden],
+.toast__icon[hidden],
+.hud__panel[hidden] {
+  display: none;
+}
+
+.u-row {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+}
+
+.u-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.u-spacer {
+  flex: 1 1 auto;
+}
+
+/* One-shot animation hooks, added and removed by `playAnimation` in
+   Widgets.ts. They exist as classes rather than being inlined by JS so the
+   timing curve stays in the stylesheet with everything else - the game code
+   says "shake this", not "shake this for 420ms with this bezier". */
+.is-shaking {
+  animation: ftn-shake 420ms var(--ease-out);
+}
+
+.is-popping {
+  animation: ftn-pop var(--dur-pop) var(--ease-back);
+}
+
+.is-pulsing {
+  animation: ftn-pulse 1.4s ease-in-out infinite;
+}
+
+/* The chunky outline used on hero text sitting over the sky or the world.
+   Four offsets beat `-webkit-text-stroke` because it stays outside the glyph
+   instead of eating into it, which keeps the rounded face readable. */
+.u-outlined {
+  color: var(--c-paper);
+  text-shadow: 3px 0 0 var(--c-ink), -3px 0 0 var(--c-ink), 0 3px 0 var(--c-ink),
+    0 -3px 0 var(--c-ink), 2px 2px 0 var(--c-ink), -2px 2px 0 var(--c-ink),
+    2px -2px 0 var(--c-ink), -2px -2px 0 var(--c-ink),
+    0 8px 0 rgba(59, 42, 28, 0.25);
+}
+
+/* -------------------------------------------------------------- panels -- */
+
+/* The base card. Cream stock, thick warm border, hard bottom edge, and a
+   `--sh-top` highlight so the top lip catches light. Panels are also the
+   default `position: relative` anchor for badges and corner buttons. */
+.panel {
+  position: relative;
+  padding: var(--s5);
+  color: var(--c-text);
+  background: var(--c-paper);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-3), var(--sh-top);
+}
+
+/* A hairline of straw just inside the border. Reads as a printed keyline on
+   card stock and stops the large cream field from feeling empty. */
+.panel::after {
+  position: absolute;
+  inset: 2px;
+  border: 1px solid rgba(211, 167, 66, 0.35);
+  border-radius: calc(var(--r-xl) - 4px);
+  pointer-events: none;
+  content: "";
+}
+
+.panel--flat {
+  box-shadow: var(--sh-1), var(--sh-top);
+}
+
+.panel--wide {
+  width: min(880px, calc(100vw - var(--gutter) * 2));
+}
+
+.panel--tight {
+  padding: var(--s4);
+}
+
+.panel--sunk {
+  background: var(--c-paper-2);
+  box-shadow: var(--sh-well);
+}
+
+.panel__header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--s3);
+  align-items: center;
+  padding: var(--s4) var(--s5);
+  background: linear-gradient(
+    180deg,
+    var(--c-straw-light) 0%,
+    var(--c-straw) 100%
+  );
+  border-bottom: var(--bw) solid var(--c-border);
+}
+
+.panel__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--t-lg);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--s5);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.panel__footer {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--s3);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--s4) var(--s5);
+  background: var(--c-paper-2);
+  border-top: var(--bw) solid var(--c-border);
+}
+
+/* ------------------------------------------------------------- buttons -- */
+
+/* Buttons are the signature component. The construction:
+     - a solid fill with a lighter top half (the `linear-gradient`),
+     - `inset 0 -4px 0` of a darker shade: the *lip*, which reads as the
+       button's own thickness,
+     - a hard drop shadow beneath it: the gap to the surface below.
+   On `:active` the element translates down by the lip height while the lip
+   and the drop shadow collapse, so the whole thing squashes into the page.
+   That single trick is what separates "mobile game" from "web form". */
+.btn {
+  position: relative;
+  display: inline-flex;
+  gap: var(--s2);
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: var(--s3) var(--s5);
+  font: inherit;
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+  text-align: center;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  background: linear-gradient(180deg, var(--c-paper) 0%, var(--c-paper-2) 100%);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 calc(var(--lip) * -1) 0 rgba(90, 64, 48, 0.22),
+    var(--sh-2);
+  transition: transform var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out);
+  appearance: none;
+}
+
+.btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn:active:not(:disabled) {
+  /* Move down by the lip, then remove the lip: the travel and the loss of
+     thickness happen together, which is what sells the press. */
+  transform: translateY(var(--lip));
+  box-shadow: inset 0 -1px 0 rgba(90, 64, 48, 0.25), var(--sh-1);
+}
+
+.btn:focus-visible {
+  outline: 3px solid var(--c-sky-dark);
+  outline-offset: 3px;
+}
+
+.btn__icon {
+  font-size: 1.15em;
+  line-height: 1;
+}
+
+.btn--primary {
+  color: var(--c-ink);
+  background: linear-gradient(180deg, var(--c-straw-light) 0%, var(--c-straw) 100%);
+  box-shadow: inset 0 calc(var(--lip) * -1) 0 var(--c-straw-dark), var(--sh-2);
+}
+
+.btn--primary:active:not(:disabled) {
+  box-shadow: inset 0 -1px 0 var(--c-straw-dark), var(--sh-1);
+}
+
+.btn--buy {
+  color: #fdfff8;
+  text-shadow: 0 2px 0 rgba(38, 76, 14, 0.45);
+  background: linear-gradient(180deg, var(--c-grass-light) 0%, var(--c-grass) 100%);
+  box-shadow: inset 0 calc(var(--lip) * -1) 0 var(--c-grass-dark), var(--sh-2);
+}
+
+.btn--buy:active:not(:disabled) {
+  box-shadow: inset 0 -1px 0 var(--c-grass-dark), var(--sh-1);
+}
+
+.btn--danger {
+  color: #fff6f6;
+  text-shadow: 0 2px 0 rgba(110, 26, 33, 0.45);
+  background: linear-gradient(180deg, var(--c-barn-light) 0%, var(--c-barn) 100%);
+  box-shadow: inset 0 calc(var(--lip) * -1) 0 var(--c-barn-dark), var(--sh-2);
+}
+
+.btn--danger:active:not(:disabled) {
+  box-shadow: inset 0 -1px 0 var(--c-barn-dark), var(--sh-1);
+}
+
+/* Ghost: no card, no lip. Used for close buttons and secondary menu rows
+   where a third chunky slab would be noise. It still gets a hover plate so
+   the hit area is discoverable. */
+.btn--ghost {
+  color: var(--c-text-muted);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: var(--c-ink);
+  background: rgba(211, 167, 66, 0.18);
+  filter: none;
+}
+
+.btn--ghost:active:not(:disabled) {
+  transform: translateY(1px);
+  background: rgba(211, 167, 66, 0.3);
+  box-shadow: none;
+}
+
+.btn--sm {
+  min-width: 0;
+  min-height: 34px;
+  padding: var(--s2) var(--s4);
+  font-size: var(--t-sm);
+  border-radius: var(--r-md);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--icon {
+  width: var(--tap);
+  min-width: 0;
+  padding: 0;
+  font-size: var(--t-lg);
+  border-radius: var(--r-pill);
+}
+
+/* Disabled is a *state*, not a dimming. Halving the opacity of dark text on
+   cream paper produces washed-out mush that fails contrast and reads as a
+   rendering bug; instead the button becomes visibly inert card - flat, no
+   lip, sunken surface, and clearly darker-than-paper text that still passes
+   contrast at ~5:1. */
+.btn:disabled {
+  color: var(--c-text-muted);
+  text-shadow: none;
+  cursor: not-allowed;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--c-paper-3) 0 8px,
+    var(--c-paper-4) 8px 16px
+  );
+  border-color: var(--c-ink-faint);
+  box-shadow: var(--sh-well);
+  filter: none;
+}
+
+/* ---------------------------------------------------------- key badges -- */
+
+/* The keycap used in prompts and hints ("[E] Sell hay"). Same lip trick as a
+   button, scaled down, so the two families obviously belong together. */
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9em;
+  height: 1.9em;
+  padding: 0 0.42em;
+  font-size: var(--t-sm);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #fff 0%, var(--c-paper-2) 100%);
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 -3px 0 rgba(90, 64, 48, 0.24);
+}
+
+/* --------------------------------------------------------------- chips -- */
+
+/* A currency readout: pill, icon, rolling number. Chips live in the HUD top
+   bar and inside reward rows, so they must look right on both sky and paper. */
+.chip {
+  display: inline-flex;
+  gap: var(--s2);
+  align-items: center;
+  min-height: 36px;
+  padding: var(--s2) var(--s4) var(--s2) var(--s3);
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+  white-space: nowrap;
+  background: linear-gradient(180deg, var(--c-paper) 0%, var(--c-paper-2) 100%);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 -3px 0 rgba(90, 64, 48, 0.18), var(--sh-1);
+}
+
+.chip__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  font-size: 1.05em;
+  line-height: 1;
+  background: var(--c-straw-light);
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 2px rgba(169, 120, 31, 0.35);
+}
+
+.chip__value {
+  min-width: 2.5ch;
+  text-align: right;
+}
+
+.chip--money .chip__icon {
+  background: var(--c-straw);
+}
+
+.chip--gem .chip__icon {
+  background: var(--c-sky-light);
+  box-shadow: inset 0 0 0 2px rgba(47, 124, 173, 0.35);
+}
+
+.chip--hay .chip__icon {
+  background: var(--c-grass-light);
+  box-shadow: inset 0 0 0 2px rgba(59, 118, 28, 0.3);
+}
+
+/* Applied by `chip.flash()`; removed on `animationend` by Widgets.ts. */
+.chip--flash {
+  animation: ftn-pop var(--dur-pop) var(--ease-back);
+}
+
+.chip--sm {
+  min-height: 28px;
+  padding: 1px var(--s3) 1px var(--s1);
+  font-size: var(--t-sm);
+  border-width: 2px;
+}
+
+/* -------------------------------------------------------------- meters -- */
+
+/* Meters animate with `transform: scaleX()` on the fill rather than `width`.
+   Width is a layout property: animating it on the backpack bar would relayout
+   the HUD sixty times a second next to a renderer that needs the frame. The
+   fill is a plain solid colour precisely because scaling distorts gradients
+   and stripes. */
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 120px;
+}
+
+.meter__head {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--t-xs);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.meter__label {
+  color: var(--c-text-muted);
+}
+
+.meter__text {
+  color: var(--c-ink);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.meter__track {
+  position: relative;
+  height: 16px;
+  overflow: hidden;
+  background: var(--c-paper-3);
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-well);
+}
+
+.meter__fill {
+  width: 100%;
+  height: 100%;
+  background: var(--c-straw-deep);
+  border-radius: inherit;
+  /* Anchored left so scaleX grows rightwards from the cap. */
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-3) var(--ease-out),
+    background-color var(--dur-3) var(--ease-out);
+  will-change: transform;
+}
+
+/* A fixed highlight that does *not* scale with the fill, so the bar keeps a
+   glossy top edge at any value. */
+.meter__track::after {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  left: 4px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: var(--r-pill);
+  pointer-events: none;
+  content: "";
+}
+
+.meter--lg .meter__track {
+  height: 22px;
+  border-width: var(--bw);
+}
+
+.meter--backpack .meter__fill {
+  background: var(--c-grass);
+}
+
+/* Backpack pressure: amber near full, barn red and pulsing when the player
+   physically cannot pick up more hay. The pulse is the only ambient loop in
+   the HUD, and it exists because a full backpack silently wasting every swing
+   is the single most frustrating thing that can happen in this loop. */
+.meter--backpack.meter--warn .meter__fill {
+  background: var(--c-straw-deep);
+}
+
+.meter--backpack.meter--full .meter__fill {
+  background: var(--c-barn);
+}
+
+.meter--backpack.meter--full .meter__track {
+  animation: ftn-pulse 900ms ease-in-out infinite;
+}
+
+.meter--stack .meter__fill {
+  background: var(--c-straw);
+}
+
+/* Legendary-ish sweep across the stack-progress bar. Purely decorative, one
+   composited element, and it is the same shimmer used for legendary loot so
+   the two read as the same "something good is happening" language. */
+.meter--stack .meter__track::before {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 70%
+  );
+  background-size: 260% 100%;
+  animation: ftn-shimmer 2.6s linear infinite;
+  pointer-events: none;
+  content: "";
+}
+
+/* ---------------------------------------------------------------- tabs -- */
+
+.tabs {
+  display: flex;
+  gap: var(--s2);
+  padding: var(--s2);
+  overflow-x: auto;
+  background: var(--c-paper-2);
+  border-bottom: var(--bw) solid var(--c-border);
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: var(--s2) var(--s4);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: var(--r-pill);
+  transition: color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+  appearance: none;
+}
+
+.tab:hover {
+  color: var(--c-ink);
+  background: rgba(211, 167, 66, 0.2);
+}
+
+.tab:focus-visible {
+  outline: 3px solid var(--c-sky-dark);
+  outline-offset: 2px;
+}
+
+.tab--active {
+  color: var(--c-ink);
+  background: var(--c-paper);
+  border-color: var(--c-border);
+  box-shadow: inset 0 -3px 0 rgba(90, 64, 48, 0.16);
+}
+
+/* ------------------------------------------------------------- sliders -- */
+
+/* Real `<input type=range>` so keyboard, screen reader and touch behaviour
+   come free. The filled portion is a background gradient driven by `--fill`
+   (0..1), which Widgets.ts writes on input - one custom-property write per
+   drag event, no per-frame work. */
+.slider {
+  display: grid;
+  grid-template-areas:
+    "label value"
+    "input input";
+  grid-template-columns: 1fr auto;
+  gap: var(--s2) var(--s3);
+  align-items: center;
+}
+
+.slider__label {
+  grid-area: label;
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+}
+
+.slider__value {
+  grid-area: value;
+  min-width: 4ch;
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.slider__input {
+  --fill: 0;
+
+  grid-area: input;
+  width: 100%;
+  height: var(--tap);
+  margin: 0;
+  cursor: pointer;
+  background: transparent;
+  appearance: none;
+}
+
+.slider__input:focus-visible {
+  outline: 3px solid var(--c-sky-dark);
+  outline-offset: 4px;
+  border-radius: var(--r-pill);
+}
+
+/* WebKit / Blink track + thumb. The two vendor blocks cannot be merged into
+   one selector list: an unknown pseudo-element invalidates the whole rule. */
+.slider__input::-webkit-slider-runnable-track {
+  height: 14px;
+  background: linear-gradient(
+      90deg,
+      var(--c-straw-deep) calc(var(--fill) * 100%),
+      var(--c-paper-3) 0
+    )
+    no-repeat;
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-well);
+}
+
+.slider__input::-webkit-slider-thumb {
+  width: 26px;
+  height: 26px;
+  /* Centres a 26px thumb on an 18px (14 + 2 + 2) track box. */
+  margin-top: -6px;
+  background: linear-gradient(180deg, var(--c-paper) 0%, var(--c-paper-2) 100%);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 -3px 0 rgba(90, 64, 48, 0.24), var(--sh-1);
+  appearance: none;
+}
+
+.slider__input:active::-webkit-slider-thumb {
+  box-shadow: inset 0 -1px 0 rgba(90, 64, 48, 0.24), var(--sh-1);
+}
+
+.slider__input::-moz-range-track {
+  height: 14px;
+  background: var(--c-paper-3);
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-well);
+}
+
+.slider__input::-moz-range-progress {
+  height: 14px;
+  background: var(--c-straw-deep);
+  border-radius: var(--r-pill);
+}
+
+.slider__input::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  background: var(--c-paper);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 -3px 0 rgba(90, 64, 48, 0.24);
+}
+
+/* ------------------------------------------------------------- toggles -- */
+
+/* The checkbox stays in the DOM and stays focusable - it is only visually
+   replaced. Hiding it with `display: none` would remove it from the tab order
+   and from assistive tech, which is the usual way custom switches break. */
+.toggle {
+  display: flex;
+  gap: var(--s4);
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--tap);
+  cursor: pointer;
+}
+
+.toggle__label {
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+}
+
+.toggle__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.toggle__track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 58px;
+  height: 32px;
+  background: var(--c-paper-3);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-well);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(180deg, #fff 0%, var(--c-paper-2) 100%);
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: 0 2px 0 rgba(90, 64, 48, 0.25);
+  transition: transform var(--dur-2) var(--ease-back);
+}
+
+.toggle__input:checked + .toggle__track {
+  background: var(--c-grass);
+}
+
+.toggle__input:checked + .toggle__track .toggle__knob {
+  transform: translateX(26px);
+}
+
+.toggle__input:focus-visible + .toggle__track {
+  outline: 3px solid var(--c-sky-dark);
+  outline-offset: 3px;
+}
+
+/* ------------------------------------------------------------ scrollbars */
+
+/* Thin and warm, matching the paper. Firefox gets the two-property standard
+   version; WebKit/Blink get the pseudo-elements. Both are scoped to scrolling
+   surfaces rather than applied globally. */
+.panel__body,
+.modal__body,
+.shop-list,
+.quests,
+.collection,
+.scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-straw-deep) transparent;
+}
+
+.panel__body::-webkit-scrollbar,
+.modal__body::-webkit-scrollbar,
+.shop-list::-webkit-scrollbar,
+.quests::-webkit-scrollbar,
+.collection::-webkit-scrollbar,
+.scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.panel__body::-webkit-scrollbar-track,
+.modal__body::-webkit-scrollbar-track,
+.shop-list::-webkit-scrollbar-track,
+.quests::-webkit-scrollbar-track,
+.collection::-webkit-scrollbar-track,
+.scroll::-webkit-scrollbar-track {
+  background: rgba(211, 167, 66, 0.14);
+  border-radius: var(--r-pill);
+}
+
+.panel__body::-webkit-scrollbar-thumb,
+.modal__body::-webkit-scrollbar-thumb,
+.shop-list::-webkit-scrollbar-thumb,
+.quests::-webkit-scrollbar-thumb,
+.collection::-webkit-scrollbar-thumb,
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--c-straw-deep);
+  border: 2px solid transparent;
+  border-radius: var(--r-pill);
+  background-clip: padding-box;
+}
+
+.panel__body::-webkit-scrollbar-thumb:hover,
+.modal__body::-webkit-scrollbar-thumb:hover,
+.shop-list::-webkit-scrollbar-thumb:hover,
+.quests::-webkit-scrollbar-thumb:hover,
+.collection::-webkit-scrollbar-thumb:hover,
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--c-straw-dark);
+  background-clip: padding-box;
+}
+
+/* ------------------------------------------------------------- rarity --- */
+
+/* Each class sets two locals and then paints with them, so a rarity class can
+   be dropped on any element - a name, a card, a toast - and everything inside
+   picks up the right hue without further plumbing. */
+.rarity-common {
+  --rarity: var(--rar-common-hue);
+  --rarity-ink: var(--rar-common-ink);
+  --rarity-glow: var(--rar-common-glow);
+}
+
+.rarity-uncommon {
+  --rarity: var(--rar-uncommon-hue);
+  --rarity-ink: var(--rar-uncommon-ink);
+  --rarity-glow: var(--rar-uncommon-glow);
+}
+
+.rarity-rare {
+  --rarity: var(--rar-rare-hue);
+  --rarity-ink: var(--rar-rare-ink);
+  --rarity-glow: var(--rar-rare-glow);
+}
+
+.rarity-epic {
+  --rarity: var(--rar-epic-hue);
+  --rarity-ink: var(--rar-epic-ink);
+  --rarity-glow: var(--rar-epic-glow);
+}
+
+.rarity-legendary {
+  --rarity: var(--rar-legendary-hue);
+  --rarity-ink: var(--rar-legendary-ink);
+  --rarity-glow: var(--rar-legendary-glow);
+}
+
+.rarity-common,
+.rarity-uncommon,
+.rarity-rare,
+.rarity-epic,
+.rarity-legendary {
+  color: var(--rarity-ink);
+}
+
+/* Opt-in decorations, so the colour tokens can be used without the glow. */
+.rarity-glow {
+  box-shadow: 0 0 0 2px var(--rarity), 0 0 18px var(--rarity-glow),
+    var(--sh-1);
+}
+
+.rarity-text-glow {
+  text-shadow: 0 0 10px var(--rarity-glow);
+}
+
+/* Legendary gets the sweep. Scoped to `.rarity-legendary.rarity-sweep` so it
+   never fires on a whole grid of commons. */
+.rarity-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.rarity-legendary.rarity-sweep::before {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.7) 50%,
+    transparent 65%
+  );
+  background-size: 300% 100%;
+  animation: ftn-shimmer 2.4s linear infinite;
+  pointer-events: none;
+  content: "";
+}
+
+/* ==========================================================================
+   SCREENS AND WIDGETS
+   ========================================================================= */
+
+/* ------------------------------------------------------- loading screen -- */
+
+.loading {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-loading);
+  display: grid;
+  gap: var(--s6);
+  place-items: center;
+  padding: var(--gutter);
+  /* Sky over a wheat horizon: the first frame of the game already looks like
+     the game, so the transition into the title screen is seamless. */
+  background: linear-gradient(
+    180deg,
+    var(--c-sky) 0%,
+    var(--c-sky-light) 52%,
+    var(--c-straw-light) 78%,
+    var(--c-straw) 100%
+  );
+  transition: opacity var(--dur-4) var(--ease-out);
+}
+
+.loading--done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  align-items: center;
+  width: min(420px, 100%);
+  text-align: center;
+}
+
+.loading__logo {
+  font-size: var(--t-2xl);
+  font-weight: var(--w-black);
+  line-height: var(--lh-tight);
+  color: var(--c-ink);
+}
+
+.loading__needle {
+  font-size: var(--t-3xl);
+  line-height: 1;
+  animation: ftn-bob 2.2s ease-in-out infinite;
+}
+
+.loading__bar {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  overflow: hidden;
+  background: var(--c-paper-3);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-well);
+}
+
+.loading__fill {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, var(--c-straw) 0%, var(--c-straw-deep) 100%);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-3) var(--ease-out);
+  will-change: transform;
+}
+
+.loading__pct {
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.loading__tip {
+  min-height: 2.6em;
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
+  text-wrap: balance;
+}
+
+/* --------------------------------------------------------- title screen -- */
+
+.title {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-loading);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--gutter) + env(safe-area-inset-top)) var(--gutter)
+    calc(var(--gutter) + env(safe-area-inset-bottom));
+  text-align: center;
+  /* Transparent: the live scene renders behind the title, and a soft warm
+     vignette keeps the type readable over whatever is on screen. */
+  background: radial-gradient(
+    120% 90% at 50% 30%,
+    rgba(255, 248, 234, 0.1) 0%,
+    rgba(46, 31, 19, 0.45) 100%
+  );
+  animation: ftn-fade-in var(--dur-4) var(--ease-out) both;
+}
+
+.title__logo {
+  font-size: var(--t-display);
+  font-weight: var(--w-black);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  animation: ftn-pop var(--dur-4) var(--ease-back) both;
+}
+
+.title__logo em {
+  display: block;
+  font-size: 0.62em;
+  font-style: normal;
+  color: var(--c-straw);
+  text-shadow: 3px 0 0 var(--c-ink), -3px 0 0 var(--c-ink), 0 3px 0 var(--c-ink),
+    0 -3px 0 var(--c-ink), 0 8px 0 rgba(59, 42, 28, 0.3);
+}
+
+.title__tagline {
+  max-width: 30ch;
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
+  color: var(--c-paper);
+  text-shadow: 0 2px 0 rgba(46, 31, 19, 0.55);
+  text-wrap: balance;
+}
+
+.title__menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  width: min(300px, 100%);
+}
+
+.title__menu .btn {
+  min-height: 52px;
+  font-size: var(--t-lg);
+}
+
+/* The title is the one place a ghost button sits on a *dark* surface, and the
+   default muted brown all but vanishes against the vignette. Inverted here
+   rather than in `.btn--ghost` itself, because everywhere else in the game a
+   ghost button is on cream paper and wants the dark treatment. */
+.title__menu .btn--ghost {
+  color: var(--c-paper);
+  text-shadow: 0 2px 0 rgba(46, 31, 19, 0.6);
+}
+
+.title__menu .btn--ghost:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 248, 234, 0.22);
+}
+
+.title__menu .btn--ghost:active:not(:disabled) {
+  background: rgba(255, 248, 234, 0.34);
+}
+
+.title__foot {
+  font-size: var(--t-xs);
+  color: rgba(255, 248, 234, 0.75);
+  text-shadow: 0 1px 0 rgba(46, 31, 19, 0.5);
+}
+
+/* ----------------------------------------------------------- crosshair -- */
+
+/* Dead centre, never interactive, and deliberately small: the world is the
+   thing being looked at. It grows and turns green when something is in reach,
+   which is the game's only universal "you can touch this" signal. */
+.crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: var(--z-prompt);
+  width: 26px;
+  height: 26px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.crosshair__ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(255, 248, 234, 0.85);
+  border-radius: var(--r-pill);
+  box-shadow: 0 0 0 2px rgba(46, 31, 19, 0.35),
+    inset 0 0 0 2px rgba(46, 31, 19, 0.25);
+  transition: transform var(--dur-2) var(--ease-back),
+    border-color var(--dur-2) var(--ease-out), opacity var(--dur-2) linear;
+  opacity: 0.75;
+}
+
+.crosshair__dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  background: var(--c-paper);
+  border-radius: var(--r-pill);
+  box-shadow: 0 0 0 2px rgba(46, 31, 19, 0.5);
+  transform: translate(-50%, -50%);
+  transition: background-color var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-back);
+}
+
+.crosshair--hot .crosshair__ring {
+  border-color: var(--c-grass-light);
+  opacity: 1;
+  transform: scale(1.25);
+}
+
+.crosshair--hot .crosshair__dot {
+  background: var(--c-grass-light);
+  transform: translate(-50%, -50%) scale(1.3);
+}
+
+.crosshair--digging .crosshair__ring {
+  border-color: var(--c-straw);
+  animation: ftn-pulse 420ms ease-in-out infinite;
+}
+
+.crosshair--hidden {
+  opacity: 0;
+}
+
+/* ------------------------------------------------------------------ HUD -- */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-hud);
+  padding: calc(var(--gutter) + env(safe-area-inset-top)) var(--gutter)
+    calc(var(--gutter) + env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+
+/* Corners are absolutely positioned rather than laid out in a grid: each one
+   should be able to change size without nudging the others, and a grid would
+   reflow all four every time the money chip gains a digit. */
+.hud__top-left,
+.hud__top-right,
+.hud__bottom-left,
+.hud__bottom-right {
+  position: absolute;
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  max-width: calc(50% - var(--s4));
+}
+
+.hud__top-left {
+  top: calc(var(--gutter) + env(safe-area-inset-top));
+  left: var(--gutter);
+  flex-wrap: wrap;
+}
+
+.hud__top-right {
+  top: calc(var(--gutter) + env(safe-area-inset-top));
+  right: var(--gutter);
+  justify-content: flex-end;
+}
+
+.hud__bottom-left {
+  bottom: calc(var(--gutter) + env(safe-area-inset-bottom));
+  left: var(--gutter);
+  flex-direction: column;
+  align-items: stretch;
+  width: min(300px, 45vw);
+}
+
+.hud__bottom-right {
+  right: var(--gutter);
+  bottom: calc(var(--gutter) + env(safe-area-inset-bottom));
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* Top-centre: the stack progress bar, the one number that tells the player
+   how far through a haystack they are. */
+.hud__top-center {
+  position: absolute;
+  top: calc(var(--gutter) + env(safe-area-inset-top));
+  left: 50%;
+  width: min(360px, 46vw);
+  transform: translateX(-50%);
+}
+
+.hud__panel {
+  padding: var(--s3) var(--s4);
+  background: rgba(255, 248, 234, 0.92);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-2), var(--sh-top);
+  pointer-events: auto;
+}
+
+.hud__tool {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+}
+
+.hud__tool-icon {
+  font-size: var(--t-lg);
+  line-height: 1;
+}
+
+/* -------------------------------------------------- interaction prompt -- */
+
+/* Sits just below the crosshair so the eye finds it without leaving centre.
+   `ftn-pop` on appear, and a plain fade on leave via the `--out` class. */
+.prompt {
+  position: absolute;
+  top: calc(50% + 54px);
+  left: 50%;
+  z-index: var(--z-prompt);
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  padding: var(--s2) var(--s5) var(--s2) var(--s3);
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+  white-space: nowrap;
+  background: rgba(255, 248, 234, 0.95);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-pill);
+  box-shadow: var(--sh-2), var(--sh-top);
+  /* Centred with the independent `translate` property, NOT with `transform`.
+     `ftn-pop` animates `transform`, and a running animation replaces the
+     declared value outright - so a `transform: translateX(-50%)` here would be
+     thrown away for the duration of the pop and the prompt would jump half
+     its own width to the right every time it appeared. `translate` composes
+     with `transform` instead of competing with it. */
+  translate: -50% 0;
+  animation: ftn-pop var(--dur-pop) var(--ease-back);
+  pointer-events: none;
+}
+
+.prompt--hidden {
+  display: none;
+}
+
+.prompt__cost {
+  color: var(--c-grass-deep);
+  font-variant-numeric: tabular-nums;
+}
+
+.prompt--blocked {
+  border-color: var(--c-barn-deep);
+}
+
+.prompt--blocked .prompt__text {
+  color: var(--c-barn-deep);
+}
+
+/* ------------------------------------------------------ floating popups -- */
+
+.popups {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-popup);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* The outer node carries the *position* (a `translate3d` written by JS from a
+   projected world point); the inner node carries the *animation*. Splitting
+   them is what lets the float run as a pure composited CSS animation while JS
+   only ever touches the wrapper once, at spawn. */
+.popup {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  /* Zero width + centred flex child = the text is centred on the anchor point
+     without needing to measure it (measuring would force layout). */
+  width: 0;
+  will-change: transform;
+}
+
+.popup__inner {
+  font-size: var(--t-lg);
+  font-weight: var(--w-black);
+  color: var(--c-paper);
+  white-space: nowrap;
+  text-shadow: 2px 0 0 var(--c-ink), -2px 0 0 var(--c-ink), 0 2px 0 var(--c-ink),
+    0 -2px 0 var(--c-ink), 0 4px 6px rgba(46, 31, 19, 0.4);
+  animation: ftn-float-up var(--dur-float) var(--ease-out) both;
+}
+
+.popup--money .popup__inner {
+  color: var(--c-straw-light);
+}
+
+.popup--gem .popup__inner {
+  color: var(--c-sky-light);
+}
+
+.popup--hay .popup__inner {
+  color: var(--c-grass-light);
+}
+
+.popup--bad .popup__inner {
+  color: var(--c-barn-light);
+}
+
+.popup--big .popup__inner {
+  font-size: var(--t-2xl);
+}
+
+/* ------------------------------------------------------------- toasts --- */
+
+.toasts {
+  position: absolute;
+  top: calc(var(--gutter) + env(safe-area-inset-top) + 52px);
+  right: var(--gutter);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  align-items: flex-end;
+  width: min(340px, calc(100vw - var(--gutter) * 2));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+  background: var(--c-paper);
+  /* The tone stripe: a fat left border rather than a tinted background, so
+     the text keeps its contrast on cream in every tone. */
+  border: var(--bw) solid var(--c-border);
+  border-left-width: 8px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-2), var(--sh-top);
+  animation: ftn-slide-in-right var(--dur-toast) var(--ease-back) both;
+}
+
+.toast--out {
+  animation: ftn-slide-out-right var(--dur-toast) var(--ease-in) both;
+}
+
+.toast__icon {
+  flex: 0 0 auto;
+  font-size: var(--t-lg);
+  line-height: 1;
+}
+
+.toast__msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast--info {
+  border-left-color: var(--c-sky-deep);
+}
+
+.toast--good {
+  border-left-color: var(--c-grass-deep);
+}
+
+.toast--bad {
+  border-left-color: var(--c-barn-deep);
+}
+
+/* -------------------------------------------------- full-screen flashes -- */
+
+/* The colour wash `FlashLayer` in fx/ScreenEffects.ts creates and drives: a
+   gold pop on a golden bundle, a red one on a bad landing.
+
+   It is a DOM element rather than a post-processing pass because compositing
+   one opaque-ish rectangle on the GPU costs nothing, needs no render target,
+   and - crucially - is not tone-mapped by the renderer into some other colour
+   on the way to the screen.
+
+   Only two properties are ever written from JS: `background-color` at the
+   moment of the flash and `opacity` as it decays. Both are compositor-only, so
+   a decaying flash never touches layout or paint on the main thread. It starts
+   fully transparent, so the layer is inert until something flashes.
+
+   The stacking position is deliberate: above the HUD, the popups and the
+   toasts, so a flash washes over the readouts as it would over the world, but
+   below `--z-modal` - a dialog is a deliberate pause, and strobing a shop list
+   while the player is reading prices helps nobody. */
+.flash-layer {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) - 1);
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+/* -------------------------------------------------------------- modals -- */
+
+/* The scrim is the pointer-events owner and the click-outside target; the
+   panel inside stops propagation. `place-items: center` keeps the dialog
+   centred at every size, and the panel's own `max-height` plus a scrolling
+   body means a long shop list never pushes the header off screen. */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  padding: var(--gutter);
+  place-items: center;
+  background: var(--c-scrim);
+  animation: ftn-fade-in var(--dur-2) var(--ease-out) both;
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(82vh, 720px);
+  padding: 0; /* header/body/footer own their padding */
+  overflow: hidden;
+  animation: ftn-pop var(--dur-pop) var(--ease-back) both;
+}
+
+/* The panel keyline would sit above the scrolling body and clip oddly against
+   the header, so modals opt out of it. */
+.modal::after {
+  content: none;
+}
+
+.modal--wide {
+  width: min(880px, 100%);
+}
+
+.modal__header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--s3);
+  align-items: center;
+  padding: var(--s4) var(--s4) var(--s4) var(--s5);
+  background: linear-gradient(180deg, var(--c-straw-light) 0%, var(--c-straw) 100%);
+  border-bottom: var(--bw) solid var(--c-border);
+}
+
+.modal__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--t-lg);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal__close {
+  flex: 0 0 auto;
+}
+
+.modal__tabs {
+  flex: 0 0 auto;
+}
+
+.modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--s5);
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--c-paper);
+  /* Momentum scrolling on touch without letting the gesture reach the canvas
+     behind the dialog. */
+  overscroll-behavior: contain;
+}
+
+.modal__footer {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--s3);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--s4) var(--s5);
+  background: var(--c-paper-2);
+  border-top: var(--bw) solid var(--c-border);
+}
+
+/* ----------------------------------------------------------- shop rows -- */
+
+.shop-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* icon | text | price+button. The middle column is the only flexible one, so
+   a long blurb wraps instead of squeezing the buy button. */
+.shop-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--s4);
+  align-items: center;
+  padding: var(--s4);
+  background: var(--c-paper-2);
+  border: 2px solid var(--c-paper-4);
+  border-radius: var(--r-lg);
+  transition: border-color var(--dur-2) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out);
+}
+
+.shop-row:hover {
+  background: var(--c-paper);
+  border-color: var(--c-straw-deep);
+}
+
+.shop-row__icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  font-size: 26px;
+  line-height: 1;
+  place-items: center;
+  background: linear-gradient(180deg, var(--c-straw-light) 0%, var(--c-straw) 100%);
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 -3px 0 rgba(169, 120, 31, 0.4);
+}
+
+.shop-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+
+.shop-row__name {
+  font-size: var(--t-md);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+}
+
+.shop-row__blurb {
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
+  text-wrap: pretty;
+}
+
+.shop-row__stat {
+  font-size: var(--t-sm);
+  font-weight: var(--w-bold);
+  color: var(--c-grass-deep);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Level pips: ten little squares beat "Lv. 7/34" for reading progress at a
+   glance, and they wrap on narrow screens instead of overflowing. */
+.shop-row__pips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: var(--s1);
+}
+
+.pip {
+  width: 10px;
+  height: 10px;
+  background: var(--c-paper-4);
+  border: 1px solid rgba(90, 64, 48, 0.35);
+  border-radius: 3px;
+}
+
+.pip--on {
+  background: var(--c-straw-deep);
+  border-color: var(--c-straw-dark);
+  box-shadow: inset 0 -2px 0 rgba(169, 120, 31, 0.6);
+}
+
+.pip--max {
+  background: var(--c-grass);
+  border-color: var(--c-grass-dark);
+}
+
+.shop-row__buy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  align-items: stretch;
+  min-width: 104px;
+}
+
+.shop-row__cost {
+  display: flex;
+  gap: var(--s1);
+  align-items: center;
+  justify-content: center;
+  font-size: var(--t-sm);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+}
+
+/* Affordability is carried by colour on the price, not by the button state
+   alone, so a scrolling list shows at a glance what is within reach. */
+.shop-row--afford .shop-row__cost {
+  color: var(--c-grass-deep);
+}
+
+.shop-row--poor .shop-row__cost {
+  color: var(--c-barn-deep);
+}
+
+.shop-row--maxed {
+  background: var(--c-paper-3);
+  border-color: var(--c-grass);
+}
+
+.shop-row--locked {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--c-paper-2) 0 10px,
+    var(--c-paper-3) 10px 20px
+  );
+  border-color: var(--c-ink-faint);
+}
+
+.shop-row--locked .shop-row__icon {
+  background: var(--c-paper-4);
+  filter: grayscale(0.7);
+}
+
+.shop-row--bought {
+  animation: ftn-pop var(--dur-pop) var(--ease-back);
+}
+
+/* ------------------------------------------------------------ settings -- */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+}
+
+.settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--c-paper-2);
+  border: 2px solid var(--c-paper-4);
+  border-radius: var(--r-lg);
+}
+
+.settings__group-title {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+  font-size: var(--t-xs);
+  font-weight: var(--w-black);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+}
+
+.settings__row + .settings__row {
+  padding-top: var(--s3);
+  border-top: 1px dashed var(--c-paper-4);
+}
+
+.settings__hint {
+  font-size: var(--t-xs);
+  color: var(--c-text-dim);
+}
+
+/* -------------------------------------------------------------- quests -- */
+
+.quests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.quest {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--s3) var(--s4);
+  align-items: center;
+  padding: var(--s4);
+  background: var(--c-paper-2);
+  border: 2px solid var(--c-paper-4);
+  border-left: 6px solid var(--c-straw-deep);
+  border-radius: var(--r-lg);
+}
+
+.quest__icon {
+  font-size: var(--t-xl);
+  line-height: 1;
+}
+
+.quest__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.quest__title {
+  font-size: var(--t-md);
+  font-weight: var(--w-bold);
+  color: var(--c-ink);
+}
+
+.quest__meter {
+  min-width: 0;
+}
+
+.quest__reward {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  align-items: flex-end;
+}
+
+.quest--done {
+  background: rgba(111, 191, 63, 0.14);
+  border-color: var(--c-grass);
+  border-left-color: var(--c-grass-deep);
+}
+
+.quest--claimable {
+  border-left-color: var(--c-grass-deep);
+  animation: ftn-pulse 1.6s ease-in-out infinite;
+}
+
+.quest--done .quest__title {
+  color: var(--c-grass-dark);
+}
+
+/* ---------------------------------------------------------- collection -- */
+
+/* `auto-fill` + `minmax` means the grid reflows from six columns on a desktop
+   modal to two on a 380px phone with no media query of its own. */
+.collection {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--s3);
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  align-items: center;
+  justify-content: center;
+  padding: var(--s3) var(--s2);
+  overflow: hidden;
+  text-align: center;
+  background: var(--c-paper-2);
+  border: 2px solid var(--c-paper-4);
+  border-radius: var(--r-md);
+  aspect-ratio: 1;
+  transition: transform var(--dur-2) var(--ease-back),
+    border-color var(--dur-2) var(--ease-out);
+}
+
+.cell:hover {
+  transform: translateY(-2px);
+  border-color: var(--c-straw-deep);
+}
+
+.cell__icon {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.cell__name {
+  font-size: var(--t-xs);
+  font-weight: var(--w-bold);
+  line-height: 1.2;
+  color: var(--c-ink);
+  overflow-wrap: anywhere;
+}
+
+.cell__count {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 20px;
+  padding: 0 5px;
+  font-size: var(--t-xs);
+  font-weight: var(--w-black);
+  color: var(--c-paper);
+  background: var(--c-ink-soft);
+  border-radius: var(--r-pill);
+}
+
+/* Undiscovered treasures are a silhouette, not a blank: showing the shape of
+   what is missing is most of the reason a collection screen works at all. */
+.cell--locked {
+  color: var(--c-text-dim);
+  background: var(--c-paper-3);
+  border-style: dashed;
+  border-color: var(--c-ink-faint);
+}
+
+.cell--locked .cell__icon {
+  filter: grayscale(1) brightness(0.55) opacity(0.55);
+}
+
+.cell--locked .cell__name {
+  color: var(--c-text-dim);
+}
+
+/* A found treasure is bordered in its rarity and, for legendaries, sweeps. */
+.cell--found {
+  background: var(--c-paper);
+  border-color: var(--rarity, var(--c-paper-4));
+  box-shadow: 0 0 12px var(--rarity-glow, transparent);
+}
+
+.cell--new::before {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: var(--w-black);
+  letter-spacing: 0.08em;
+  color: var(--c-paper);
+  background: var(--c-barn);
+  border-radius: var(--r-pill);
+  content: "NEW";
+}
+
+/* ------------------------------------------------- needle celebration --- */
+
+/* The payoff screen. It is the only place in the game allowed to be loud:
+   rotating rays, a bouncing needle, gold everywhere. */
+.celebrate {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-celebrate);
+  display: grid;
+  padding: var(--gutter);
+  place-items: center;
+  overflow: hidden;
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(255, 214, 122, 0.92) 0%,
+    rgba(232, 196, 109, 0.88) 35%,
+    rgba(46, 31, 19, 0.82) 100%
+  );
+  animation: ftn-fade-in var(--dur-4) var(--ease-out) both;
+}
+
+/* One composited element doing the god-rays. A conic gradient rotating at 18
+   seconds per turn costs a single transform per frame on the compositor and
+   nothing on the main thread. */
+.celebrate__rays {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 180vmax;
+  height: 180vmax;
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgba(255, 255, 255, 0.28) 0deg 6deg,
+    transparent 6deg 18deg
+  );
+  transform: translate(-50%, -50%);
+  animation: ftn-spin 18s linear infinite;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.celebrate__card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  align-items: center;
+  width: min(480px, 100%);
+  padding: var(--s7) var(--s6);
+  text-align: center;
+  border-width: var(--bw-thick);
+  box-shadow: var(--sh-4), var(--sh-top);
+  animation: ftn-pop var(--dur-4) var(--ease-back) both;
+}
+
+.celebrate__needle {
+  font-size: clamp(3.5rem, 14vw, 6rem);
+  line-height: 1;
+  filter: drop-shadow(0 8px 12px rgba(90, 64, 48, 0.45));
+  animation: ftn-bob 2.4s ease-in-out infinite;
+}
+
+.celebrate__title {
+  font-size: var(--t-2xl);
+  font-weight: var(--w-black);
+  line-height: var(--lh-tight);
+  color: var(--c-straw-dark);
+  text-wrap: balance;
+}
+
+.celebrate__sub {
+  font-size: var(--t-md);
+  color: var(--c-text-muted);
+  text-wrap: balance;
+}
+
+.celebrate__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  justify-content: center;
+  width: 100%;
+}
+
+.celebrate__stat {
+  display: flex;
+  flex: 1 1 120px;
+  flex-direction: column;
+  gap: var(--s1);
+  align-items: center;
+  padding: var(--s3);
+  background: var(--c-paper-2);
+  border: 2px solid var(--c-paper-4);
+  border-radius: var(--r-md);
+}
+
+.celebrate__stat-label {
+  font-size: var(--t-xs);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+}
+
+.celebrate__stat-value {
+  font-size: var(--t-lg);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+}
+
+.celebrate__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  justify-content: center;
+  width: 100%;
+}
+
+/* ---------------------------------------------------------- pause menu -- */
+
+.pause {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-pause);
+  display: grid;
+  padding: var(--gutter);
+  place-items: center;
+  background: var(--c-scrim);
+  animation: ftn-fade-in var(--dur-2) var(--ease-out) both;
+}
+
+.pause__menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  width: min(340px, 100%);
+  text-align: center;
+  animation: ftn-pop var(--dur-pop) var(--ease-back) both;
+}
+
+.pause__title {
+  font-size: var(--t-xl);
+  font-weight: var(--w-black);
+  color: var(--c-ink);
+}
+
+.pause__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.pause__actions .btn {
+  min-height: 48px;
+}
+
+.pause__stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding-top: var(--s3);
+  font-size: var(--t-sm);
+  color: var(--c-text-muted);
+  border-top: 2px dashed var(--c-paper-4);
+}
+
+.pause__stat {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ==========================================================================
+   KEYFRAMES
+   The named `ftn-*` vocabulary. Everything is transform/opacity only so the
+   compositor can run them without the main thread, which is the whole point
+   of preferring CSS animation over per-frame JS in a game overlay.
+   ========================================================================= */
+
+/* Scale bounce in. The 1.04 overshoot is small on purpose: at panel size a
+   bigger overshoot reads as a glitch rather than a bounce. */
+@keyframes ftn-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+
+  60% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Rise and fade, for "+12" popups. Starts with a slight overshoot upward so
+   the number reads as *thrown* off the thing that produced it. */
+@keyframes ftn-float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.7);
+  }
+
+  18% {
+    opacity: 1;
+    transform: translateY(-14px) scale(1.12);
+  }
+
+  32% {
+    transform: translateY(-22px) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-78px) scale(0.94);
+  }
+}
+
+/* Refusal. Short, sharp, decaying - used on a failed purchase or a full
+   backpack. */
+@keyframes ftn-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  15% {
+    transform: translateX(-7px);
+  }
+
+  30% {
+    transform: translateX(6px);
+  }
+
+  45% {
+    transform: translateX(-4px);
+  }
+
+  60% {
+    transform: translateX(3px);
+  }
+
+  80% {
+    transform: translateX(-1px);
+  }
+}
+
+/* Attention loop. Deliberately gentle: it runs indefinitely on a claimable
+   quest or a full backpack and must not become annoying. */
+@keyframes ftn-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.86;
+    transform: scale(1.045);
+  }
+}
+
+/* The legendary sweep. Animating `background-position` on a sized gradient
+   rather than moving a pseudo-element keeps it to one paint on one layer. */
+@keyframes ftn-shimmer {
+  0% {
+    background-position: 180% 0;
+  }
+
+  100% {
+    background-position: -80% 0;
+  }
+}
+
+@keyframes ftn-slide-in-right {
+  0% {
+    opacity: 0;
+    transform: translateX(110%);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ftn-slide-out-right {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(110%);
+  }
+}
+
+@keyframes ftn-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ftn-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-4deg);
+  }
+
+  50% {
+    transform: translateY(-10px) rotate(4deg);
+  }
+}
+
+@keyframes ftn-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   RESPONSIVE
+   The layout is fluid by construction (clamp type, auto-fill grids), so these
+   breakpoints only handle the things fluidity cannot: reflowing the shop row,
+   thinning the HUD corners, and giving dialogs the full screen on a phone.
+   ========================================================================= */
+
+/* Tablets and small laptops. */
+@media (max-width: 720px) {
+  .hud__top-center {
+    width: min(280px, 42vw);
+  }
+
+  .modal {
+    max-height: min(88vh, 720px);
+  }
+
+  .collection {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  }
+}
+
+/* Phones, down to a 380px-wide viewport. */
+@media (max-width: 520px) {
+  :root {
+    /* Cards shrink their rounding with their padding, otherwise a 20px radius
+       on a 300px card eats the corners of the content. */
+    --r-xl: 16px;
+    --r-lg: 14px;
+  }
+
+  /* The right corner only ever holds the menu button, so the currency chips
+     get the rest of the strip. Splitting the top 50/50 here would wrap the
+     second chip onto its own line and straight under the stack bar. */
+  .hud__top-left {
+    flex-wrap: nowrap;
+    max-width: calc(100% - 60px);
+  }
+
+  .hud__top-right {
+    max-width: 52px;
+  }
+
+  .hud__bottom-left {
+    width: min(220px, 52vw);
+  }
+
+  /* The stack bar drops to its own full-width row under the currency chips
+     rather than competing with them for the top strip. It stays at the top:
+     moving it to the bottom would collide with the backpack meter, which is
+     the one readout the player checks most often. */
+  .hud__top-center {
+    top: calc(var(--gutter) + env(safe-area-inset-top) + 46px);
+    right: var(--gutter);
+    left: var(--gutter);
+    width: auto;
+    transform: none;
+  }
+
+  /* Pushed below the stack bar's new row. */
+  .toasts {
+    top: calc(var(--gutter) + env(safe-area-inset-top) + 110px);
+    left: var(--gutter);
+    width: auto;
+  }
+
+  /* Icon and text on row one, price and button spanning row two: the buy
+     button stays a full-width tap target instead of a 60px sliver. */
+  .shop-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s3);
+  }
+
+  .shop-row__buy {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .shop-row__buy .btn {
+    flex: 1 1 auto;
+  }
+
+  .shop-row__icon {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+
+  .modal-scrim {
+    padding: var(--s3);
+    place-items: end center;
+  }
+
+  /* Dialogs become a bottom sheet: reachable with a thumb, and the flat
+     bottom corners make the "attached to the edge" reading explicit. */
+  .modal {
+    width: 100%;
+    max-height: 90vh;
+    border-bottom-right-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+
+  .modal__body {
+    padding: var(--s4);
+  }
+
+  .title__menu {
+    width: 100%;
+  }
+
+  .celebrate__card {
+    padding: var(--s6) var(--s4);
+  }
+
+  .collection {
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  }
+
+  .cell__icon {
+    font-size: 24px;
+  }
+}
+
+/* Landscape phones: vertical space is the scarce resource, so hero type and
+   dialog chrome shrink rather than the content. */
+@media (max-height: 480px) and (orientation: landscape) {
+  .title {
+    gap: var(--s4);
+  }
+
+  .title__logo {
+    font-size: var(--t-2xl);
+  }
+
+  .title__tagline {
+    display: none;
+  }
+
+  .title__menu .btn,
+  .pause__actions .btn {
+    min-height: 42px;
+  }
+
+  .modal {
+    max-height: 94vh;
+  }
+
+  .celebrate__card {
+    gap: var(--s4);
+    padding: var(--s5);
+  }
+
+  .celebrate__needle {
+    font-size: 3rem;
+  }
+}
+
+/* Coarse pointers get no hover lift - on touch, `:hover` sticks after a tap
+   and leaves rows looking permanently highlighted. */
+@media (hover: none) {
+  .btn:hover:not(:disabled),
+  .shop-row:hover,
+  .cell:hover {
+    filter: none;
+    transform: none;
+  }
+
+  .shop-row:hover {
+    background: var(--c-paper-2);
+    border-color: var(--c-paper-4);
+  }
+
+  .cell:hover {
+    border-color: var(--c-paper-4);
+  }
+}
+
+/* Windows high-contrast / forced-colours: hand the borders back to the system
+   palette so the chunky cards do not collapse into invisible blocks. */
+@media (forced-colors: active) {
+  .panel,
+  .btn,
+  .chip,
+  .toast,
+  .modal,
+  .shop-row,
+  .cell,
+  .meter__track {
+    border-color: CanvasText;
+  }
+
+  .meter__fill,
+  .loading__fill,
+  .pip--on {
+    background: Highlight;
+  }
+}
+
+/* ==========================================================================
+   REDUCED MOTION
+
+   `!important` appears in this block and nowhere else in the file. It is
+   justified: this is an accessibility override that has to beat every
+   component rule above it regardless of selector specificity, and the
+   alternative - restating every animated selector at higher specificity -
+   would silently rot the first time someone adds a component and forgets.
+
+   The policy is "kill movement, keep the signal": every transform-based
+   animation and transition is collapsed, and the transient surfaces that
+   would otherwise appear with no feedback at all get a plain opacity fade
+   instead. The fades matter functionally as well as aesthetically - the
+   popup and toast pools recycle their nodes on `animationend`, so an
+   animation must still run and finish for a node to return to the pool.
+   ========================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  /* Transient surfaces keep an opacity-only entrance so "something appeared"
+     is still perceivable. These come after the blanket rule and win on
+     specificity at equal importance. */
+  .toast,
+  .modal,
+  .modal-scrim,
+  .pause,
+  .pause__menu,
+  .celebrate,
+  .celebrate__card,
+  .title,
+  .title__logo,
+  .prompt {
+    animation: ftn-fade-in var(--dur-2) linear both !important;
+  }
+
+  .toast--out {
+    animation: ftn-fade-out var(--dur-2) linear both !important;
+  }
+
+  /* Popups still need to be readable for a beat before they recycle, so they
+     get a real duration - just no travel. */
+  .popup__inner {
+    animation: ftn-fade-out 900ms linear both !important;
+  }
+
+  /* Ambient loops carry no information that is not also carried by colour, so
+     they are simply switched off. */
+  .celebrate__rays,
+  .rarity-legendary.rarity-sweep::before,
+  .meter--stack .meter__track::before,
+  .loading__needle,
+  .celebrate__needle,
+  .quest--claimable,
+  .meter--backpack.meter--full .meter__track,
+  .crosshair--digging .crosshair__ring {
+    animation: none !important;
+  }
+
+  /* Residual transforms from hover/press affordances. */
+  .btn:active:not(:disabled),
+  .btn--ghost:active:not(:disabled),
+  .cell:hover,
+  .crosshair--hot .crosshair__ring {
+    transform: none !important;
+  }
+
+  .crosshair--hot .crosshair__dot {
+    transform: translate(-50%, -50%) !important;
+  }
+}
+
+/* Used only by the reduced-motion block, but declared at top level because
+   keyframes inside a media query are scoped to it in some engines. */
+@keyframes ftn-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}

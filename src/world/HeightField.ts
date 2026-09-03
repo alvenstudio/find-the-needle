@@ -426,17 +426,6 @@ function sampleLattice(table: { size: number; values: Float32Array }, x: number,
   return (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
 }
 
-/** Convert cubic metres of hay into the game's "straw" currency. */
-export const STRAWS_PER_CUBIC_METRE = 260;
-
-export function volumeToStraws(volume: number): number {
-  return volume * STRAWS_PER_CUBIC_METRE;
-}
-
-export function strawsToVolume(straws: number): number {
-  return straws / STRAWS_PER_CUBIC_METRE;
-}
-
 /** Clamp a point to the footprint, used when placing buried objects. */
 export function clampToFootprint(x: number, z: number, radius: number): [number, number] {
   const distance = Math.hypot(x, z);

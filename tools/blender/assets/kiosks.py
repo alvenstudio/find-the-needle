@@ -96,13 +96,22 @@ def banded_sweep(name, stations, half_y, half_z, colors, family="Prop"):
 
 
 def striped_slab(name, size, segments, colors, loc=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0),
-                 family="Prop"):
-    """A flat slab banded along its local X: awnings, plank walls, shingle courses."""
+                 family="Prop", bevel_width=0.015):
+    """A flat slab banded along its local X: awnings, plank walls, shingle courses.
+
+    The chamfer matters most here: a slab is a big flat lit surface sitting next
+    to bevelled posts, and a razor edge next to a chamfered one reads as an
+    error.  Only the outline is bevelled -- the band boundaries are coplanar, so
+    the modifier's angle limit leaves them alone.  Pass ``bevel_width=0.0`` for
+    a slab that is buried between other parts and cannot afford the triangles.
+    """
     sx, sy, sz = size
     stations = [(-sx / 2.0 + sx * i / segments, 0.0) for i in range(segments + 1)]
     slab = banded_sweep(name, stations, sy / 2.0, sz / 2.0, colors, family)
     place(slab, loc=loc, rot=rot)
     apply_transform(slab)
+    if bevel_width:
+        bevel(slab, bevel_width, 1)
     return slab
 
 
@@ -165,19 +174,27 @@ def build_sell_trough():
     parts.append(floor)
 
     # Front boards are staves so the trough reads as coopered, not extruded.
-    parts.append(striped_slab("FrontWall", (2.60, 0.11, 0.52), 7, ("wood", "wood_light"),
-                              loc=(0.0, -0.37, 0.88)))
-    parts.append(cube("BackWall", size=(2.60, 0.11, 0.52), loc=(0.0, 0.37, 0.88),
+    # 2.36 long, not 2.60: the side walls own x 1.18..1.30, and a slab that ran
+    # the full width would put its -Y face in the same plane as theirs and
+    # z-fight along the whole front of the trough.  Bevel skipped on both slabs
+    # -- their outline is buried between the floor, the end walls and the corner
+    # caps, and the trough needs its triangles for those.
+    parts.append(striped_slab("FrontWall", (2.36, 0.11, 0.52), 7, ("wood", "wood_light"),
+                              loc=(0.0, -0.37, 0.88), bevel_width=0.0))
+    parts.append(cube("BackWall", size=(2.36, 0.11, 0.52), loc=(0.0, 0.37, 0.88),
                       color="wood"))
     for x in (-1.24, 1.24):
         end = cube("EndWall", size=(0.12, 0.85, 0.52), loc=(x, 0.0, 0.88), color="wood_light")
         bevel(end, BOARD_BEVEL, 1)
         parts.append(end)
 
+    # Dropped 0.02 into the wall tops so the cap bites rather than balances.
     for x in (-1.24, 1.24):
         for y in (-0.37, 0.37):
-            parts.append(cube("CornerCap", size=(0.20, 0.20, 0.12), loc=(x, y, 1.20),
-                              color="gold", family="Metal"))
+            corner = cube("CornerCap", size=(0.20, 0.20, 0.12), loc=(x, y, 1.18),
+                          color="gold", family="Metal")
+            bevel(corner, 0.02, 1)
+            parts.append(corner)
 
     board = cube("PriceBoard", size=(2.30, 0.10, 0.92), loc=(0.0, 0.37, 1.60), color="plank")
     paint(board, "barn_trim", faces=select_faces(board, lambda c, n: n.y < -0.8))
@@ -185,14 +202,16 @@ def build_sell_trough():
     parts.append(board)
     parts.append(decal_panel("Panel", 2.00, 0.70, (0.0, 0.37 - 0.05 - DECAL_OFFSET, 1.60)))
 
-    # Thin enough that the post stays behind the chalk face it carries.
+    # The board is deeper (0.10) than the post is thick (0.08), so the post is
+    # wholly behind the face it carries and the chalk quad keeps its full
+    # DECAL_OFFSET clearance instead of grazing the timber.
     parts.append(post("SignPost", 1.30, (1.62, 0.0), 0.08, "wood_dark"))
-    chalkboard = cube("Chalkboard", size=(0.62, 0.07, 0.48), loc=(1.62, 0.0, 1.42),
+    chalkboard = cube("Chalkboard", size=(0.62, 0.10, 0.48), loc=(1.62, 0.0, 1.42),
                       color="wood_dark")
     bevel(chalkboard, BOARD_BEVEL, 1)
     parts.append(chalkboard)
     parts.append(decal_panel("ChalkFace", 0.50, 0.36,
-                             (1.62, -0.035 - DECAL_OFFSET, 1.42), color="black"))
+                             (1.62, -0.05 - DECAL_OFFSET, 1.42), color="black"))
 
     trough = join(parts, "SellTrough")
     set_origin(trough, (0.0, 0.0, 0.0))
@@ -283,8 +302,9 @@ def build_quest_board():
         parts.append(striped_slab(f"Roof{sign}", (0.62, 2.00, 0.07), 4, shingles,
                                   loc=(0.0, sign * 0.26, 2.24),
                                   rot=(0.0, math.radians(22.0 * sign), math.radians(90.0))))
-    parts.append(cube("Ridge", size=(2.06, 0.10, 0.08), loc=(0.0, 0.0, 2.40),
-                      color="wood_dark"))
+    ridge = cube("Ridge", size=(2.06, 0.10, 0.08), loc=(0.0, 0.0, 2.40), color="wood_dark")
+    bevel(ridge, 0.02, 1)
+    parts.append(ridge)
 
     for i, (x, z, roll) in enumerate(((-0.62, 0.84, 7.0), (0.02, 0.82, -5.0),
                                       (0.64, 0.85, 9.0))):
@@ -325,29 +345,38 @@ def build_leaderboard():
     parts.append(board)
     parts.append(decal_panel("Panel", 1.80, 2.20, (0.0, -0.06 - DECAL_OFFSET, 1.60)))
 
+    # 0.32 tall and seated at 2.76: the pediment overlaps the board top (2.78)
+    # by 2 cm instead of hovering above it, and still reaches 3.08 to meet the
+    # trophy base.  The posts (top 2.85) are buried inside it either way.
     header = extrude_profile("Header", [
-        (-1.15, 0.0), (1.15, 0.0), (1.15, 0.10), (0.70, 0.19), (0.30, 0.26),
-        (0.0, 0.28), (-0.30, 0.26), (-0.70, 0.19), (-1.15, 0.10),
+        (-1.15, 0.0), (1.15, 0.0), (1.15, 0.10), (0.70, 0.22), (0.30, 0.30),
+        (0.0, 0.32), (-0.30, 0.30), (-0.70, 0.22), (-1.15, 0.10),
     ], 0.28, color="wood_dark")
     # Face 0 is the front cap: gilding it is what makes the carving read.
     paint(header, "gold", family="Metal", faces=[0])
-    place(header, loc=(0.0, 0.0, 2.80))
+    place(header, loc=(0.0, 0.0, 2.76))
     parts.append(header)
 
     # The cup finishes at exactly 3.50 m -- it is the whole silhouette, so it
     # gets the last 0.34 m and nothing is allowed to grow past it.
-    parts.append(cube("TrophyBase", size=(0.30, 0.30, 0.08), loc=(0.0, 0.0, 3.12),
-                      color="wood_dark"))
+    trophy_base = cube("TrophyBase", size=(0.30, 0.30, 0.08), loc=(0.0, 0.0, 3.12),
+                       color="wood_dark")
+    bevel(trophy_base, 0.02, 1)
+    parts.append(trophy_base)
+    # 10 segments, not 8: 8 puts 45 deg between facet normals and smooth(40)
+    # would silently do nothing.  36 deg rounds the cup as intended.
     cup = from_profile("Trophy", [(0.12, 0.0), (0.12, 0.04), (0.05, 0.07), (0.045, 0.16),
                                   (0.10, 0.21), (0.13, 0.30), (0.13, 0.34)],
-                       segments=8, color="gold", family="Metal")
+                       segments=10, color="gold", family="Metal")
     smooth(cup, 40)
     place(cup, loc=(0.0, 0.0, 3.16))
     parts.append(cup)
-    for x in (-0.17, 0.17):
-        parts.append(cube("TrophyHandle", size=(0.10, 0.05, 0.16), loc=(x, 0.0, 3.40),
-                          rot=(0.0, math.radians(18.0 * (1 if x > 0 else -1)), 0.0),
-                          color="gold", family="Metal"))
+    for x in (-0.16, 0.16):
+        handle = cube("TrophyHandle", size=(0.10, 0.05, 0.16), loc=(x, 0.0, 3.40),
+                      rot=(0.0, math.radians(18.0 * (1 if x > 0 else -1)), 0.0),
+                      color="gold", family="Metal")
+        bevel(handle, 0.015, 1)
+        parts.append(handle)
 
     tower = join(parts, "Leaderboard")
     set_origin(tower, (0.0, 0.0, 0.0))
@@ -393,15 +422,21 @@ def build_rebirth_shrine():
         stone = from_profile(f"Stone{i}", [(0.25, 0.0), (0.23, height * 0.34),
                                            (0.20, height * 0.70), (0.14, height)],
                              segments=6, color="stone", close_bottom=True)
-        rune = select_faces(stone, lambda c, n: n.y < -0.8
+        # Both the 90 and 270 deg facets: the ring is walked round as well as
+        # approached, and a rune band on one side only vanishes half the time.
+        rune = select_faces(stone, lambda c, n: abs(n.y) > 0.8
                             and height * 0.34 < c.z < height * 0.70)
         paint(stone, SHRINE_GLOW, family="Emit", faces=rune)
         # Jitter last: it perturbs the normals the rune predicate relies on.
         jitter(stone, 0.018, seed=i + 1)
         angle = math.radians(bearing)
+        # +90, not -90: this maps the local 270 deg rune facet onto the stone's
+        # own outward bearing, so the glow faces the player walking up to the
+        # circle instead of the altar.  z=0.10 keeps every jittered base vertex
+        # (+/-0.018) under the pad surface, which is only 0.14 out at r=1.15.
         place(stone,
-              loc=(math.cos(angle) * STONE_RING_RADIUS, math.sin(angle) * STONE_RING_RADIUS, 0.13),
-              rot=(0.0, 0.0, angle - math.radians(90.0)))
+              loc=(math.cos(angle) * STONE_RING_RADIUS, math.sin(angle) * STONE_RING_RADIUS, 0.10),
+              rot=(0.0, 0.0, angle + math.radians(90.0)))
         parts.append(stone)
 
     crystal = bipyramid("Crystal", 0.20, 0.42, -0.34, segments=6,
@@ -430,6 +465,15 @@ def build_rebirth_shrine():
 GATE_PILLAR_X = 1.95           # inner faces land ~3.0 m apart
 GATE_LINTEL_Z = 2.99
 GATE_ROPE_Z = 1.25             # rope height, shared by the gate and its barrier
+# The pillar is an octagon of this radius at rope height, so subtracting it
+# puts the anchor's centre exactly on the stone's inner face: the eye -- and
+# the rope's knots, which share this x -- is buried to its midline and bites
+# 0.04 past the surface even at its corners, instead of hanging free in the
+# opening.  Derived, not a magic number: change the pillar profile and this
+# has to change with it.
+GATE_PILLAR_R_AT_ROPE = 0.38
+GATE_ROPE_ANCHOR_X = GATE_PILLAR_X - GATE_PILLAR_R_AT_ROPE
+GATE_LANTERN_X = 1.20          # widest part stops 0.23 short of the pillar
 
 
 def build_tier_gate():
@@ -454,19 +498,29 @@ def build_tier_gate():
                        color="stone_dark")
         bevel(footing, 0.03, 1)
         parts.append(footing)
-        parts.append(cube("Capital", size=(0.55, 0.55, 0.22), loc=(x, 0.0, 2.70),
-                          color="stone"))
+        # 0.98 across so it overhangs the 0.42 pillar radius by ~0.07 -- at
+        # 0.55 the whole cube sat inside the lathe and did nothing but eat
+        # triangles.  The chamfer is what turns the overhang into a highlight.
+        capital = cube("Capital", size=(0.98, 0.98, 0.22), loc=(x, 0.0, 2.70),
+                       color="stone")
+        bevel(capital, 0.03, 1)
+        parts.append(capital)
         # Anchor for the barrier rope, which is a separate export.
-        parts.append(cube("RopeEye", size=(0.12, 0.12, 0.12),
-                          loc=(math.copysign(GATE_PILLAR_X - 0.48, x), 0.0, GATE_ROPE_Z),
-                          color="gold", family="Metal"))
+        eye = cube("RopeEye", size=(0.12, 0.12, 0.12),
+                   loc=(math.copysign(GATE_ROPE_ANCHOR_X, x), 0.0, GATE_ROPE_Z),
+                   color="gold", family="Metal")
+        bevel(eye, 0.02, 1)
+        parts.append(eye)
 
     lintel = cube("Lintel", size=(5.00, 0.55, 0.42), loc=(0.0, 0.0, GATE_LINTEL_Z),
                   color="wood")
     paint(lintel, "wood_dark", faces=select_faces(lintel, lambda c, n: n.z > 0.8))
     bevel(lintel, BOARD_BEVEL, 1)
     parts.append(lintel)
-    cap = cube("LintelCap", size=(5.30, 0.72, 0.18), loc=(0.0, 0.0, 3.30), color="wood_dark")
+    # 3.29, so the cap's underside (3.20) is exactly the lintel's top plane.
+    # At 3.30 the two bevelled boxes left a 1 cm slot you could see sky through
+    # across the whole 5.3 m of the arch.
+    cap = cube("LintelCap", size=(5.30, 0.72, 0.18), loc=(0.0, 0.0, 3.29), color="wood_dark")
     bevel(cap, BOARD_BEVEL, 1)
     parts.append(cap)
 
@@ -482,15 +536,23 @@ def build_tier_gate():
         parts.append(cube("Hanger", size=(0.06, 0.05, 0.14), loc=(x, 0.0, 2.75),
                           color="iron", family="Metal"))
 
-    for x in (-1.55, 1.55):
+    # Inboard at 1.20: at 1.55 the cap and the emissive glass were half sunk in
+    # the pillar, whose inner surface is at ~1.55 over the lantern's height.
+    # The arm still runs up into the lintel underside at 2.78, so the lanterns
+    # hang off the beam rather than floating beside the stone.
+    for x in (-GATE_LANTERN_X, GATE_LANTERN_X):
         parts.append(cube("LanternArm", size=(0.07, 0.07, 0.24), loc=(x, 0.0, 2.68),
                           color="iron", family="Metal"))
         parts.append(cone("LanternCap", r1=0.15, r2=0.05, depth=0.12, verts=6,
                           loc=(x, 0.0, 2.51), color="iron", family="Metal"))
-        parts.append(cube("LanternGlass", size=(0.20, 0.20, 0.28), loc=(x, 0.0, 2.31),
-                          color="straw_light", family="Emit"))
-        parts.append(cube("LanternFoot", size=(0.24, 0.24, 0.06), loc=(x, 0.0, 2.14),
-                          color="iron", family="Metal"))
+        glass = cube("LanternGlass", size=(0.20, 0.20, 0.28), loc=(x, 0.0, 2.31),
+                     color="straw_light", family="Emit")
+        bevel(glass, 0.02, 1)
+        parts.append(glass)
+        foot = cube("LanternFoot", size=(0.24, 0.24, 0.06), loc=(x, 0.0, 2.14),
+                    color="iron", family="Metal")
+        bevel(foot, 0.02, 1)
+        parts.append(foot)
 
     gate = join(parts, "TierGate")
     set_origin(gate, (0.0, 0.0, 0.0))
@@ -504,7 +566,9 @@ def build_tier_gate_rope():
     Built in the gate's own local space and pivoted on the ground at the gate
     centre, so the game parents it with an identity transform.
     """
-    span = (GATE_PILLAR_X - 0.48) * 2.0
+    # Same anchor x as the gate's rope eyes, so the knots bite into the stone
+    # the eyes are bolted to.
+    span = GATE_ROPE_ANCHOR_X * 2.0
     stations = []
     steps = 8
     for i in range(steps + 1):
@@ -514,9 +578,14 @@ def build_tier_gate_rope():
         stations.append(((t - 0.5) * span, GATE_ROPE_Z - sag))
     rope = banded_sweep("BarrierRope", stations, 0.05, 0.05, ("barn_red", "barn_trim"))
 
-    knots = [cube("Knot", size=(0.14, 0.14, 0.14),
-                  loc=(math.copysign(span / 2.0, side), 0.0, GATE_ROPE_Z),
-                  color="gold", family="Metal") for side in (-1.0, 1.0)]
+    # 0.16 so the knot swallows the gate's 0.12 eye and reads as a loop over it.
+    knots = []
+    for side in (-1.0, 1.0):
+        knot = cube("Knot", size=(0.16, 0.16, 0.16),
+                    loc=(math.copysign(span / 2.0, side), 0.0, GATE_ROPE_Z),
+                    color="gold", family="Metal")
+        bevel(knot, 0.02, 1)
+        knots.append(knot)
 
     barrier = join([rope] + knots, "TierGateRope")
     set_origin(barrier, (0.0, 0.0, 0.0))
@@ -530,15 +599,28 @@ def build_tier_gate_rope():
 def build_storage_silo():
     """The late-tier hay deposit: a hopper on legs with a chute and a gauge.
 
-    The sign plate rides high on the barrel so the chute mouth stays clear --
-    a player walks under the panel to reach the deposit point.
+    The sign plate rides high on the barrel, clear above the chute mouth: the
+    player reads it head-on while standing at the chute, and its underside at
+    1.91 m clears the 1.75 m player rather than meeting them at the forehead.
     """
     parts = []
+    # 1.72, not 1.02: the legs stand at radial 0.877 and the hopper cone only
+    # swells to that radius at z~1.70, so a shorter post leaves the whole
+    # barrel hovering over four disconnected stumps.  At 1.72 the last 0.11 m
+    # of each leg is buried in the cone.
     for x in (-0.62, 0.62):
         for y in (-0.62, 0.62):
-            parts.append(post(f"Leg{x}{y}", 1.02, (x, y), 0.16, "iron", family="Metal"))
-    for y in (-0.62, 0.62):
-        parts.append(cube("Brace", size=(1.40, 0.08, 0.08), loc=(0.0, y, 0.42),
+            parts.append(post(f"Leg{x}{y}", 1.72, (x, y), 0.16, "iron", family="Metal"))
+    # Two brace rings, both below z=1.0 and stopping 0.03 short of the leg
+    # centres so no brace end cap shares a plane with a leg face.  Higher rings
+    # are not available: the chute sweeps y=-0.62 between z=1.06 and 1.42, and
+    # above that the widening cone would swallow them.
+    for z in (0.42, 0.92):
+        for y in (-0.62, 0.62):
+            parts.append(cube("Brace", size=(1.34, 0.08, 0.08), loc=(0.0, y, z),
+                              color="iron", family="Metal"))
+    for x in (-0.62, 0.62):
+        parts.append(cube("Brace", size=(0.08, 1.34, 0.08), loc=(x, 0.0, 0.92),
                           color="iron", family="Metal"))
 
     hopper_segments = 12
@@ -551,6 +633,11 @@ def build_storage_silo():
     paint(hopper, "iron", family="Metal", faces=lathe_span(hopper_segments, 3))
     smooth(hopper, 34)
     parts.append(hopper)
+    # Flange over the leg-to-hopper junction: 12-sided to sit in phase with the
+    # hopper, wide enough (1.04) to swallow the leg tops, and the one part that
+    # makes the barrel read as bolted onto the frame rather than resting on it.
+    parts.append(cylinder("HopperRing", radius=1.04, depth=0.16, verts=12,
+                          loc=(0.0, 0.0, 1.70), color="iron", family="Metal"))
     parts.append(cone("Lid", r1=0.90, r2=0.22, depth=0.26, verts=12, loc=(0.0, 0.0, 2.72),
                       color="barn_red"))
 
@@ -558,19 +645,34 @@ def build_storage_silo():
                  rot=(math.radians(35.0), 0.0, 0.0), color="metal_dark", family="Metal")
     bevel(chute, BOARD_BEVEL, 1)
     parts.append(chute)
-    parts.append(cube("ChuteLip", size=(0.62, 0.20, 0.10), loc=(0.0, -1.10, 0.88),
-                      color="iron", family="Metal"))
+    lip = cube("ChuteLip", size=(0.62, 0.20, 0.10), loc=(0.0, -1.10, 0.88),
+               color="iron", family="Metal")
+    bevel(lip, 0.02, 1)
+    parts.append(lip)
 
-    parts.append(cube("Gauge", size=(0.16, 0.14, 0.52), loc=(0.0, -0.80, 1.62),
-                      color="glass", family="Glass"))
+    # The gauge LIES ON the cone instead of standing off it: tilted 44 deg to
+    # match the flare (the cone rises 0.68 over 0.66 of radius) and swung to the
+    # 345 deg facet, which is the one piece of hull that neither the chute
+    # (|x| < 0.26) nor the sign plate (z > 1.9) hides.  Its back edge sinks
+    # 0.03 into the hull along its whole length and the glass stands ~0.08
+    # proud, so it reads as a window rather than a box half inside the metal.
+    gauge_rot = (math.radians(44.0), 0.0, math.radians(75.0))
+    parts.append(cube("Gauge", size=(0.16, 0.08, 0.46), loc=(0.540, -0.145, 1.363),
+                      rot=gauge_rot, color="glass", family="Glass"))
+    for strap_at in ((0.654, -0.176, 1.485), (0.426, -0.114, 1.241)):
+        parts.append(cube("GaugeStrap", size=(0.20, 0.13, 0.05), loc=strap_at,
+                          rot=gauge_rot, color="iron", family="Metal"))
 
-    plate = cube("SignPlate", size=(2.08, 0.10, 0.88), loc=(0.0, -1.00, 2.05), color="metal")
+    plate = cube("SignPlate", size=(2.08, 0.10, 0.88), loc=(0.0, -1.00, 2.35), color="metal")
     paint(plate, "barn_trim", faces=select_faces(plate, lambda c, n: n.y < -0.8))
     bevel(plate, BOARD_BEVEL, 1)
     parts.append(plate)
-    parts.append(decal_panel("Panel", 2.00, 0.80, (0.0, -1.05 - DECAL_OFFSET, 2.05)))
+    parts.append(decal_panel("Panel", 2.00, 0.80, (0.0, -1.05 - DECAL_OFFSET, 2.35)))
+    # 0.44 long: at x=+/-0.55 the barrel's face is only ~0.89 out, so a 0.34
+    # bracket would bite barely a centimetre of hull.  This one runs from
+    # inside the plate to well inside the metal.
     for x in (-0.55, 0.55):
-        parts.append(cube("Bracket", size=(0.08, 0.34, 0.08), loc=(x, -0.86, 2.05),
+        parts.append(cube("Bracket", size=(0.08, 0.44, 0.08), loc=(x, -0.81, 2.35),
                           color="iron", family="Metal"))
 
     silo = join(parts, "StorageSilo")
@@ -605,10 +707,15 @@ def build_spawn_pad():
     paint(pad, "gold", family="Metal", faces=lathe_span(PAD_SEGMENTS, 4))
     parts = [pad]
 
-    for x in (-1.30, 1.30):
-        for y in (-1.30, 1.30):
-            parts.append(cube(f"LampFoot{x}{y}", size=(0.26, 0.26, 0.10),
-                              loc=(x, y, PAD_TOP + 0.05), color="stone_dark"))
+    # 1.22, not 1.30: the pad is a 14-gon, so on the 45 deg diagonal its rim is
+    # only 1.962 m out.  A 0.26 foot at 1.30 puts its corner at 2.022 -- off the
+    # edge, in mid air.  At 1.22 the corner lands at 1.909, safely inboard.
+    for x in (-1.22, 1.22):
+        for y in (-1.22, 1.22):
+            foot = cube(f"LampFoot{x}{y}", size=(0.26, 0.26, 0.10),
+                        loc=(x, y, PAD_TOP + 0.05), color="stone_dark")
+            bevel(foot, 0.02, 1)
+            parts.append(foot)
             parts.append(cylinder(f"LampPost{x}{y}", radius=0.07, depth=0.95, verts=8,
                                   loc=(x, y, PAD_TOP + 0.52), color="iron", family="Metal"))
             parts.append(icosphere(f"LampGlobe{x}{y}", radius=0.13, subdivisions=1,

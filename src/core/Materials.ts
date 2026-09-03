@@ -29,6 +29,16 @@ import {
  *     everything else does.
  */
 
+/**
+ * A note on colour, because getting this wrong is invisible until it is not.
+ *
+ * three.js has colour management on by default since r152: `new Color('#6fbf3f')`
+ * already converts from sRGB into the linear working space. Calling
+ * `convertSRGBToLinear()` on top of that squares the value, which darkens and
+ * over-saturates everything by a factor that looks almost plausible - grass
+ * goes from a bright field green to a swampy near-black. Every colour in this
+ * project is authored as an sRGB hex string and handed straight to `Color`.
+ */
 export type SurfaceFamily = 'Prop' | 'Metal' | 'Foliage' | 'Glass' | 'Emit';
 
 export interface SharedUniforms {
@@ -163,8 +173,10 @@ export function stylize<T extends Material>(material: T, options: StylizedOption
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-  #ifdef USE_COLOR
-    totalEmissiveRadiance *= vColor;
+  #if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA ) || defined( USE_INSTANCING_COLOR )
+    // vColor is a vec4 when the geometry carries alpha, so swizzle rather than
+    // assigning it whole - the shader will not compile otherwise.
+    totalEmissiveRadiance *= vColor.rgb;
   #endif`,
       );
     }

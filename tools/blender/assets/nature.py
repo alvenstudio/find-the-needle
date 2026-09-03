@@ -10,6 +10,16 @@ library.  Two rules shape the geometry here:
 * anything organic starts as a jittered icosphere so no two instances of a bush
   or a boulder share a silhouette once the game rotates them.
 
+Two conventions that every builder below obeys:
+
+* -Y is toward the camera.  A positive X rotation leans a part toward the
+  player, which is why grass blades, reeds and the sunflower head all take
+  positive tilts.
+* ``shade()`` multiplies *linear* RGB, so a factor reads roughly as its square
+  root perceptually: shade(c, 0.58) is about 24% darker to the eye, not 42%.
+  All the second-pass factors here are written in linear terms for that reason
+  -- they look extreme next to an sRGB colour picker and are not.
+
 The one prop that does not stand on the ground is ``cloud``: its origin sits at
 its own centre so the sky layer can spin it about itself.
 """
@@ -33,13 +43,28 @@ GRASS_BLADE_WIDTHS = (0.017, 0.010, 0.003)
 # --------------------------------------------------------------------------
 # Shared shapes
 # --------------------------------------------------------------------------
+def centre_origin(obj):
+    """Bake any leftover rotation/scale, then drop the pivot on the origin.
+
+    ``join()`` adopts the transform of its first object, and ``set_origin``
+    shifts the mesh by a *world*-space offset applied in local space -- which is
+    only the right answer when that transform has no rotation.  Applying first
+    makes it right for every caller and leaves the exported root node identity.
+    """
+    apply_transform(obj)
+    set_origin(obj, (0.0, 0.0, 0.0))
+    return obj
+
+
 def blob(name, radius, loc, color, family="Prop", subdivisions=1, squash=1.0,
          stretch=1.0, roughness=BLOB_JITTER, seed=0):
     """A jittered icosphere: the lump behind foliage, boulders and clouds.
 
     ``squash`` (Z) and ``stretch`` (X) are applied *after* the jitter so the
     noise stays proportional to the sphere rather than being smeared by the
-    scale.
+    scale.  Note that the jitter moves the bottom pole by up to
+    ``radius * roughness * squash``, so callers that need ground contact have to
+    sink the centre by at least that much.
     """
     lump = icosphere(name, radius=radius, subdivisions=subdivisions, loc=loc,
                      color=color, family=family)
@@ -71,13 +96,18 @@ def tapered_strip(name, length, widths, bend=0.0, lean=0.0, color=None, family="
 
 def disc(name, radius, loc=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0), segments=10,
          color=None, family="Prop"):
-    """A filled circle facing +Z: cut faces, end grain, mushroom spots.
+    """A single filled n-gon facing +Z: cut faces, end grain, mushroom spots.
 
-    Both caps are left open -- a lathe of two rings already *is* the cap, and
-    closing it would stack a second coincident face on top.
+    One polygon rather than a fan from a centre vertex.  An n-gon triangulates
+    to n-2 triangles where the fan costs n, and nothing here ever needs the
+    centre vertex -- these discs are always flat and always one colour.  On the
+    mushroom that saving is the difference between fitting the 80-triangle
+    scatter budget and not.
     """
-    face = from_profile(name, [(0.0, 0.0), (radius, 0.0)], segments=segments,
-                        color=color, family=family, close_bottom=False, close_top=False)
+    verts = [(math.cos(TAU * i / segments) * radius,
+              math.sin(TAU * i / segments) * radius,
+              0.0) for i in range(segments)]
+    face = from_points(name, verts, [tuple(range(segments))], color=color, family=family)
     place(face, loc=loc, rot=rot)
     apply_transform(face)
     return face
@@ -112,18 +142,49 @@ def stone_lump(name, radius, loc, subdivisions=1, seed=0, squash=0.72, stretch=1
                 stretch=stretch, roughness=0.22, seed=seed)
     flat(rock)
     paint(rock, "stone_dark", faces=select_faces(rock, lambda c, n: n.z < -0.15))
-    paint(rock, shade("stone", 1.18), faces=select_faces(rock, lambda c, n: n.z > 0.55))
+    paint(rock, shade("stone", 1.40), faces=select_faces(rock, lambda c, n: n.z > 0.55))
     return rock
 
 
-# The four white spots on a toadstool cap: (ring radius, height, tilt, azimuth).
-# Hand-placed rather than generated -- an even ring of spots looks printed.
+# The toadstool cap, lathed around Z.  Radii shrink monotonically, which is what
+# lets cap_seat() below find the segment a spot belongs to by radius alone.
+CAP_PROFILE = ((0.115, 0.150), (0.105, 0.175), (0.062, 0.228), (0.0, 0.250))
+CAP_SEGMENTS = 8
+# An n-sided lathe only touches the ideal profile at its ring vertices; at the
+# centre of a facet it has fallen cos(pi/n) of the way in.  Spots are seated on
+# the facet, so every radius taken off CAP_PROFILE is scaled by this.
+CAP_INSET = math.cos(math.pi / CAP_SEGMENTS)
+
+# The four white spots: (ring radius on the ideal profile, spot radius,
+# azimuth).  Hand-placed rather than generated -- an even ring of spots looks
+# printed -- but only the *placement* is by hand: the height and the tilt are
+# derived from CAP_PROFILE by cap_seat(), so the spots stay flush if the cap
+# profile is ever retuned.  Azimuths are facet centres (22.5 + 45k) so each disc
+# lands on one flat facet instead of straddling a ridge, and each spot's radius
+# is kept under the width of the profile segment it sits on.
 CAP_SPOTS = (
-    (0.048, 0.236, 30.0, 35.0),
-    (0.086, 0.203, 56.0, 145.0),
-    (0.095, 0.191, 64.0, 250.0),
-    (0.036, 0.244, 22.0, 325.0),
+    (0.086, 0.022, 67.5),
+    (0.093, 0.016, 157.5),
+    (0.078, 0.024, 292.5),
+    (0.033, 0.018, 337.5),
 )
+
+
+def cap_seat(ring):
+    """Where a spot at ideal radius ``ring`` sits: (radius, height, tilt).
+
+    ``tilt`` is the angle of the facet's own normal off vertical -- for a lathe
+    band that is atan2(rise, inset run), i.e. the same angle the surface makes
+    with the horizontal.  Returning it (rather than trusting a typed-in guess)
+    is what keeps the disc coplanar with the facet instead of floating over it
+    or cutting into it.
+    """
+    for (r0, z0), (r1, z1) in zip(CAP_PROFILE, CAP_PROFILE[1:]):
+        if r1 - 1e-9 <= ring <= r0 + 1e-9:
+            t = (r0 - ring) / (r0 - r1)
+            run = (r0 - r1) * CAP_INSET
+            return ring * CAP_INSET, z0 + t * (z1 - z0), math.atan2(z1 - z0, run)
+    raise ValueError(f"spot ring {ring} is off the cap profile")
 
 
 def build_toadstool(name, spots=True):
@@ -131,33 +192,39 @@ def build_toadstool(name, spots=True):
 
     Shared by the ``mushroom`` prop and the one growing out of the fallen log,
     which skips the spots because at log scale they turn into noise.
+
+    Both stem caps are open: the bottom is sunk under the ground (or buried in
+    the log) and the top is swallowed by the cap, whose underside starts 10 mm
+    below the top of the stem.  That is eight triangles of pure waste on a prop
+    with an 80-triangle ceiling.
     """
-    stem = from_profile(f"{name}Stem", [(0.050, 0.0), (0.036, 0.08), (0.042, 0.16)],
-                        segments=6, color="mushroom_stem")
-    cap = from_profile(
-        f"{name}Cap",
-        [(0.115, 0.150), (0.105, 0.175), (0.062, 0.228), (0.0, 0.250)],
-        segments=8, color="mushroom_cap",
-    )
+    stem = from_profile(f"{name}Stem",
+                        [(0.050, -GROUND_SINK), (0.036, 0.08), (0.042, 0.16)],
+                        segments=5, color="mushroom_stem",
+                        close_bottom=False, close_top=False)
+    cap = from_profile(f"{name}Cap", list(CAP_PROFILE), segments=CAP_SEGMENTS,
+                       color="mushroom_cap")
     smooth(cap, 50)
     gills = select_faces(cap, lambda c, n: n.z < -0.5)
-    paint(cap, shade("mushroom_stem", 0.82), faces=gills)
+    paint(cap, shade("mushroom_stem", 0.66), faces=gills)
 
     dots = []
     if spots:
-        for i, (ring, height, tilt, azimuth) in enumerate(CAP_SPOTS):
-            tilt_r, az_r = math.radians(tilt), math.radians(azimuth)
-            normal = (math.sin(tilt_r) * math.cos(az_r),
-                      math.sin(tilt_r) * math.sin(az_r),
-                      math.cos(tilt_r))
-            # Float the spot just clear of the cap so it never z-fights.
-            lift = 0.005
+        for i, (ring, radius, azimuth) in enumerate(CAP_SPOTS):
+            seat_r, seat_z, tilt = cap_seat(ring)
+            az_r = math.radians(azimuth)
+            normal = (math.sin(tilt) * math.cos(az_r),
+                      math.sin(tilt) * math.sin(az_r),
+                      math.cos(tilt))
+            # 2 mm along the facet normal: enough to beat depth precision, far
+            # too little to read as a gap on a 0.25 m prop.
+            lift = 0.002
             dots.append(disc(
-                f"{name}Spot{i}", 0.024, segments=5, color="white",
-                loc=(ring * math.cos(az_r) + normal[0] * lift,
-                     ring * math.sin(az_r) + normal[1] * lift,
-                     height + normal[2] * lift),
-                rot=(0.0, tilt_r, az_r),
+                f"{name}Spot{i}", radius, segments=5, color="white",
+                loc=(seat_r * math.cos(az_r) + normal[0] * lift,
+                     seat_r * math.sin(az_r) + normal[1] * lift,
+                     seat_z + normal[2] * lift),
+                rot=(0.0, tilt, az_r),
             ))
     return join([stem, cap] + dots, name)
 
@@ -172,7 +239,11 @@ PINE_TIERS = (
     (1.16, 0.62, 1.35, 2.55, "pine_dark"),
     (0.94, 0.46, 1.20, 3.50, "pine"),
 )
-PINE_APEX_DEPTH = 1.60
+# The apex is long and narrow on purpose: its base disc has to finish well
+# inside the top tier.  Tier 2 spans z 2.90-4.10 and is 0.66 m wide at z=3.60,
+# where this cone's 0.46 m base sits -- clear even after both are jittered.
+PINE_APEX_DEPTH = 1.90
+PINE_APEX_RADIUS = 0.46
 
 
 def build_tree_pine():
@@ -188,20 +259,27 @@ def build_tree_pine():
     for i, (r1, r2, depth, height, tone) in enumerate(PINE_TIERS):
         tier = cone(f"Tier{i}", r1=r1, r2=r2, depth=depth, verts=12,
                     loc=(0.0, 0.0, height), rot=(0.0, 0.0, math.radians(15.0 * i)),
-                    color=tone)
+                    color=tone, family="Foliage")
         jitter(tier, 0.05, seed=7 + i)
         # The underside of each skirt sits in its own shadow.
-        paint(tier, shade(tone, 0.76), faces=select_faces(tier, lambda c, n: n.z < -0.8))
+        paint(tier, shade(tone, 0.58), family="Foliage",
+              faces=select_faces(tier, lambda c, n: n.z < -0.8))
         tiers.append(tier)
 
-    apex = cone("Apex", r1=0.64, r2=0.0, depth=PINE_APEX_DEPTH, verts=12,
+    apex = cone("Apex", r1=PINE_APEX_RADIUS, r2=0.0, depth=PINE_APEX_DEPTH, verts=12,
                 loc=(0.0, 0.0, PINE_HEIGHT - PINE_APEX_DEPTH * 0.5),
-                rot=(0.0, 0.0, math.radians(22.0)), color=shade("pine", 1.18))
+                rot=(0.0, 0.0, math.radians(22.0)),
+                color=shade("pine", 1.40), family="Foliage")
     jitter(apex, 0.04, seed=11)
+    # Buried inside tier 2, but shaded like every other underside so that a
+    # jitter spike poking through never shows up as the brightest face in the
+    # tree pointing at the ground.
+    paint(apex, shade("pine", 0.72), family="Foliage",
+          faces=select_faces(apex, lambda c, n: n.z < -0.8))
 
     tree = join([trunk] + tiers + [apex], "TreePine")
     flat(tree)
-    set_origin(tree, (0.0, 0.0, 0.0))
+    centre_origin(tree)
     report(tree)
     export_glb(tree, "tree_pine")
 
@@ -228,7 +306,11 @@ def build_tree_oak():
         [(0.32, -GROUND_SINK), (0.27, 0.55), (0.22, 1.45), (0.18, 2.45), (0.15, 3.20)],
         segments=8, color="wood_dark",
     )
-    paint(trunk, "wood", faces=select_faces(trunk, lambda c, n: n.x > 0.5))
+    # The lit half of the trunk faces the camera (-Y) and the sun (+X).  On an
+    # 8-sided lathe the column normals sit at 22.5 + 45i degrees, so this test
+    # catches four of the eight -- an actual half, not the 90-degree wedge that
+    # a plain n.x test picks out.
+    paint(trunk, "wood", faces=select_faces(trunk, lambda c, n: n.x - n.y > 0.4))
 
     branches = []
     for i, (base_z, length, tilt, azimuth) in enumerate(OAK_BRANCHES):
@@ -250,12 +332,12 @@ def build_tree_oak():
                       subdivisions=subdiv, squash=0.88, seed=20 + i)
         smooth(leaves, 60)
         # Sun from above: the top of every blob catches a lighter green.
-        paint(leaves, shade(tone, 1.20), family="Foliage",
+        paint(leaves, shade(tone, 1.45), family="Foliage",
               faces=select_faces(leaves, lambda c, n: n.z > 0.6))
         crown.append(leaves)
 
     tree = join([trunk] + branches + crown, "TreeOak")
-    set_origin(tree, (0.0, 0.0, 0.0))
+    centre_origin(tree)
     report(tree)
     export_glb(tree, "tree_oak")
 
@@ -290,7 +372,7 @@ def build_tree_stump():
 
     stump = join([body, heart] + roots, "TreeStump")
     flat(stump)
-    set_origin(stump, (0.0, 0.0, 0.0))
+    centre_origin(stump)
     report(stump)
     export_glb(stump, "tree_stump")
 
@@ -298,27 +380,31 @@ def build_tree_stump():
 # --------------------------------------------------------------------------
 # Low scatter
 # --------------------------------------------------------------------------
-# (radius, x, y, z, subdivisions, colour)
+# (radius, x, y, z, subdivisions, colour).  z is the *unsunk* centre height:
+# build_bush drops each lump by GROUND_SINK.  The two satellites are set low
+# enough that even the worst jitter (radius * BLOB_JITTER * squash upward on the
+# bottom pole) still leaves the smaller one below z=0, so the bush is guaranteed
+# to meet the ground rather than hover a visible 3-5 cm above it.
 BUSH_LUMPS = (
-    (0.42, 0.00, 0.00, 0.44, 2, "leaf"),
-    (0.30, 0.30, 0.10, 0.30, 1, "leaf_dark"),
-    (0.28, -0.28, -0.09, 0.32, 1, "leaf_dark"),
+    (0.42, 0.00, 0.00, 0.46, 2, "leaf"),
+    (0.30, 0.30, 0.10, 0.26, 1, "leaf_dark"),
+    (0.28, -0.28, -0.09, 0.28, 1, "leaf_dark"),
 )
 
 
 def build_bush():
-    """Three clustered leaf blobs, ~0.9 m tall and wider than it is high."""
+    """Three clustered leaf blobs, ~0.85 m tall and wider than it is high."""
     lumps = []
     for i, (radius, x, y, z, subdiv, tone) in enumerate(BUSH_LUMPS):
-        lump = blob(f"Lump{i}", radius, (x, y, z), tone, family="Foliage",
+        lump = blob(f"Lump{i}", radius, (x, y, z - GROUND_SINK), tone, family="Foliage",
                     subdivisions=subdiv, squash=0.92, stretch=1.1, seed=40 + i)
         smooth(lump, 60)
-        paint(lump, shade(tone, 1.18), family="Foliage",
+        paint(lump, shade(tone, 1.40), family="Foliage",
               faces=select_faces(lump, lambda c, n: n.z > 0.65))
         lumps.append(lump)
 
     bush = join(lumps, "Bush")
-    set_origin(bush, (0.0, 0.0, 0.0))
+    centre_origin(bush)
     report(bush)
     export_glb(bush, "bush")
 
@@ -331,7 +417,9 @@ def build_grass_tuft():
     """
     tuft = join(grass_blades("Blade", 7), "GrassTuft")
     flat(tuft)
-    set_origin(tuft, (0.0, 0.0, 0.0))
+    # The join target is Blade0, which still carries its lean and spin;
+    # centre_origin bakes those before shifting the pivot.
+    centre_origin(tuft)
     report(tuft)
     export_glb(tuft, "grass_tuft")
 
@@ -361,16 +449,22 @@ def flower(name, height, color):
         segments=5, color=color, family="Foliage",
     )
     # Select the centre by radius, not by normal: the petal ring tilts inward
-    # steeply enough that its normals are nearly vertical too.
+    # steeply enough that its normals are nearly vertical too.  The close_top
+    # pentagon is part of that centre, which is why the head keeps its cap.
     centre = select_faces(head, lambda c, n: c.x * c.x + c.y * c.y < 0.0009)
     paint(head, "gold", family="Foliage", faces=centre)
-    paint(head, shade(color, 0.78), family="Foliage",
+    paint(head, shade(color, 0.60), family="Foliage",
           faces=select_faces(head, lambda c, n: n.z < -0.2))
     return [stem, head]
 
 
 def build_flower_patch():
-    """A small grass tuft with three flowers pushing up through it."""
+    """A small grass tuft with three flowers pushing up through it.
+
+    ~92 triangles: over the 80 of a bare grass tuft, inside the 120 this prop is
+    budgeted at.  Everything cheaper here costs a flower its round head or its
+    gold centre, so it stays a medium-tier scatter prop.
+    """
     parts = grass_blades("Blade", 5, height=0.30, seed=3)
     for i, (color, height, x, y, tilt, azimuth) in enumerate(PATCH_FLOWERS):
         for part in flower(f"Flower{i}", height, color):
@@ -380,7 +474,8 @@ def build_flower_patch():
 
     patch = join(parts, "FlowerPatch")
     flat(patch)
-    set_origin(patch, (0.0, 0.0, 0.0))
+    # Same as the grass tuft: the target blade is tilted, so bake before pivoting.
+    centre_origin(patch)
     report(patch)
     export_glb(patch, "flower_patch")
 
@@ -389,7 +484,7 @@ def build_rock():
     """A single boulder ~0.8 m across; the game rescales it per instance."""
     rock = stone_lump("Rock", 0.36, (0.0, 0.0, 0.36 * 0.72 - 0.06),
                       subdivisions=2, seed=5)
-    set_origin(rock, (0.0, 0.0, 0.0))
+    centre_origin(rock)
     report(rock)
     export_glb(rock, "rock")
 
@@ -413,7 +508,7 @@ def build_rock_cluster():
         stones.append(stone)
 
     cluster = join(stones, "RockCluster")
-    set_origin(cluster, (0.0, 0.0, 0.0))
+    centre_origin(cluster)
     report(cluster)
     export_glb(cluster, "rock_cluster")
 
@@ -458,15 +553,19 @@ def build_log():
     apply_transform(shroom)
 
     log = join([body] + ends + [stub, shroom], "FallenLog")
-    set_origin(log, (0.0, 0.0, 0.0))
+    centre_origin(log)
     report(log)
     export_glb(log, "log")
 
 
 def build_mushroom():
-    """The full 0.25 m toadstool: red cap, white spots, cream stem."""
+    """The full 0.25 m toadstool: red cap, white spots, cream stem.
+
+    78 triangles: 20 for the open stem, 46 for the cap and its gill face, 12 for
+    the four spots.
+    """
     shroom = build_toadstool("Mushroom")
-    set_origin(shroom, (0.0, 0.0, 0.0))
+    centre_origin(shroom)
     report(shroom)
     export_glb(shroom, "mushroom")
 
@@ -484,6 +583,7 @@ def build_cattail():
 
     Stems are triangular prisms: at 4 cm across nobody counts the sides, and it
     keeps all three reeds inside a budget that a hexagon would blow on its own.
+    Heads share the stems' Foliage family so the whole prop is one primitive.
     """
     parts = []
     for i, (x, y, height, tilt, azimuth) in enumerate(CATTAIL_REEDS):
@@ -494,23 +594,30 @@ def build_cattail():
             f"Head{i}",
             [(0.0, height - 0.02), (0.036, height + 0.03),
              (0.036, height + 0.20), (0.0, height + 0.26)],
-            segments=5, color="dirt_dark",
+            segments=5, color="dirt_dark", family="Foliage",
         )
         smooth(head, 55)
-        paint(head, shade("dirt_dark", 1.25), family="Prop",
-              faces=select_faces(head, lambda c, n: n.z > 0.7))
+        # Pick the tip band by height, not by normal: the head's steepest
+        # up-facing band only reaches n.z = 0.51 (there is no flat cap -- the
+        # profile closes on a point), so any n.z threshold worth writing would
+        # be a magic number that a profile tweak silently turns into a no-op.
+        paint(head, shade("dirt_dark", 1.55), family="Foliage",
+              faces=select_faces(head, lambda c, n: c.z > height + 0.19))
         for part in (stem, head):
             place(part, loc=(x, y, 0.0),
                   rot=(math.radians(tilt), 0.0, math.radians(azimuth)))
             parts.append(part)
 
     reeds = join(parts, "Cattail")
-    set_origin(reeds, (0.0, 0.0, 0.0))
+    centre_origin(reeds)
     report(reeds)
     export_glb(reeds, "cattail")
 
 
-SUNFLOWER_STEM_HEIGHT = 1.42
+# The head is tipped 70 degrees forward, which lifts its top edge ~0.28 m above
+# the stem: 1.32 + 0.28 keeps the prop at the briefed 1.6 m.
+SUNFLOWER_STEM_HEIGHT = 1.32
+SUNFLOWER_HEAD_TILT = 70.0
 SUNFLOWER_PETALS = 12
 # (height up the stem, azimuth) for the two leaves.
 SUNFLOWER_LEAVES = ((0.58, 55.0), (0.94, 235.0))
@@ -519,8 +626,13 @@ SUNFLOWER_LEAVES = ((0.58, 55.0), (0.94, 235.0))
 def build_sunflower():
     """A 1.6 m sunflower: gold petal ring, dark seed disc, two big leaves.
 
-    The head is built flat in XY and then tipped forward as one piece, which is
-    far easier to reason about than orienting twelve petals individually.
+    The head is built flat in XY with its seed face on +Z and then tipped
+    forward as one piece, which is far easier to reason about than orienting
+    twelve petals individually.  The tilt is a *positive* X rotation, the file's
+    convention for leaning toward the camera: at 70 degrees the seed face ends
+    up pointing (0, -0.94, +0.34), i.e. at the player and nodding slightly
+    skyward, the way a real head sits.  Anything small or negative here shows
+    the player the green back of the head instead.
     """
     stem = from_profile(
         "Stem",
@@ -532,6 +644,9 @@ def build_sunflower():
     for i, (height, azimuth) in enumerate(SUNFLOWER_LEAVES):
         leaf = tapered_strip(f"Leaf{i}", 0.42, (0.05, 0.09, 0.02), bend=0.10,
                              color="leaf", family="Foliage")
+        # The two azimuths are 180 degrees apart, so this pair splays
+        # symmetrically whichever way the blades are tilted; the negative angle
+        # is what makes the bend droop the tips instead of curling them up.
         place(leaf, loc=(0.0, 0.0, height),
               rot=(math.radians(-58.0), 0.0, math.radians(azimuth)))
         leaves.append(leaf)
@@ -539,27 +654,30 @@ def build_sunflower():
     seeds = from_profile(
         "SeedDisc",
         [(0.0, -0.030), (0.115, -0.012), (0.150, 0.0), (0.100, 0.028), (0.0, 0.040)],
-        segments=10, color=shade("dirt_dark", 0.55),
+        segments=10, color=shade("dirt_dark", 0.55), family="Foliage",
     )
     # The back of a sunflower head is green, not brown.
-    paint(seeds, "leaf_dark", faces=select_faces(seeds, lambda c, n: n.z < -0.4))
+    paint(seeds, "leaf_dark", family="Foliage",
+          faces=select_faces(seeds, lambda c, n: n.z < -0.4))
 
     petals = []
     for i in range(SUNFLOWER_PETALS):
         angle = TAU * i / SUNFLOWER_PETALS
         petal = tapered_strip(f"Petal{i}", 0.18, (0.030, 0.045, 0.010), bend=0.03,
-                              color="gold")
+                              color="gold", family="Foliage")
+        # A full ring, so the sign of the tilt only decides whether the petals
+        # curl up or down out of the seed plane.
         place(petal, loc=(-math.sin(angle) * 0.125, math.cos(angle) * 0.125, 0.0),
               rot=(math.radians(-84.0), 0.0, angle))
         petals.append(petal)
 
     head = join([seeds] + petals, "SunflowerHead")
     place(head, loc=(0.0, 0.0, SUNFLOWER_STEM_HEIGHT),
-          rot=(math.radians(-22.0), 0.0, 0.0))
+          rot=(math.radians(SUNFLOWER_HEAD_TILT), 0.0, 0.0))
     apply_transform(head)
 
     flower_obj = join([stem] + leaves + [head], "Sunflower")
-    set_origin(flower_obj, (0.0, 0.0, 0.0))
+    centre_origin(flower_obj)
     report(flower_obj)
     export_glb(flower_obj, "sunflower")
 
@@ -584,12 +702,12 @@ def build_cloud():
         puff = blob(f"Puff{i}", radius, (x, y, z), "cloud", subdivisions=subdiv,
                     squash=0.62, roughness=0.10, seed=60 + i)
         smooth(puff, 70)
-        paint(puff, shade("cloud", 0.86),
+        paint(puff, shade("cloud", 0.74),
               faces=select_faces(puff, lambda c, n: n.z < -0.45))
         puffs.append(puff)
 
     cloud = join(puffs, "Cloud")
-    set_origin(cloud, (0.0, 0.0, 0.0))
+    centre_origin(cloud)
     report(cloud)
     export_glb(cloud, "cloud")
 

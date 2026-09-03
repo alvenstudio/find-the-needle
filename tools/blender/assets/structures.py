@@ -6,11 +6,24 @@ the barn roof, the splayed legs under the water tower, a rotor that reads as a
 rotor -- and all the surface interest comes from painting face subsets rather
 than from adding geometry.
 
-Three helpers carry most of the file.  ``plank_wall`` builds a wall box whose
+Four helpers carry most of the file.  ``plank_wall`` builds a wall box whose
 long faces are pre-split into columns, which is the only reason there is
 anything to paint a stripe onto.  ``angled_slab`` bridges two points in a
 vertical plane and is used for every rafter, ramp, brace and door cross.
 ``prism`` extrudes a flat outline and makes the gables and trapezoid walls.
+``taper_batten`` lays a board flat against one facet of a tapering lathe.
+
+Two rules run through the whole file, because breaking either one is invisible
+in the viewport and glaring in game:
+
+  * No two outward faces ever share a plane.  Walls butt *inside* each other
+    (one pair runs the full outer dimension, the perpendicular pair is short by
+    a wall thickness and overlaps 2 cm into it) and trim is always a couple of
+    centimetres proud of what it trims.
+  * Roofs are solved so their underside passes just *below* the wall tops they
+    land on.  A roof that lands exactly on a wall top leaves a wedge of daylight
+    along the eave; the barn is walk-in, so the player would see straight
+    through it.
 """
 
 import math
@@ -25,7 +38,12 @@ BARN_RIDGE_H = 8.5
 BARN_KNEE_X, BARN_KNEE_Z = 3.4, 7.3          # where the gambrel changes pitch
 BARN_WALL_T = 0.3
 BARN_DOOR_W, BARN_DOOR_H = 3.0, 3.4          # a real opening, walk-through
-BARN_EAVE_X, BARN_EAVE_Z = 6.6, 4.5          # outer corner of the roof overhang
+BARN_EAVE_X = 6.6                            # outer corner of the roof overhang
+# Solve the lower pitch so its underside crosses the wall line 3 cm BELOW the
+# top of the side walls.  Picking a round number here instead is what opens a
+# 9 m daylight slot along both eaves.
+BARN_PITCH = (BARN_KNEE_Z - (BARN_WALL_H - 0.03)) / (BARN_W / 2.0 - BARN_KNEE_X)
+BARN_EAVE_Z = BARN_WALL_H - 0.03 - BARN_PITCH * (BARN_EAVE_X - BARN_W / 2.0)
 
 SILO_R, SILO_H = 1.6, 9.0
 SILO_SEGMENTS = 14
@@ -42,25 +60,43 @@ TOWER_LEG_SPREAD = 1.45                      # leg footprint half-width
 TOWER_LEG_INSET = 0.5                        # how far the legs lean in
 TOWER_DECK_Z = 3.7
 TOWER_TANK_TOP = 6.05
+TOWER_TANK_R = 1.5
 
 HAYBARN_W, HAYBARN_D = 8.0, 6.0
 HAYBARN_EAVE_Z, HAYBARN_RIDGE_Z = 3.45, 4.45
 
 WINDMILL_H = 6.2
-WINDMILL_HUB = (0.0, -0.95, 5.6)             # where the rotor mounts
+# The hub stands clear of the tower's own base radius (1.07 m at the bottom of
+# the blade sweep) plus the corner battens, or the sail tips vanish into the
+# tower four times per revolution.
+WINDMILL_HUB = (0.0, -1.25, 5.6)
 BLADE_LEN = 3.2
 
 
 # --------------------------------------------------------------------------
 # Geometry helpers
 # --------------------------------------------------------------------------
+def plank_columns(length, target=0.4):
+    """How many boards fit across ``length`` at roughly ``target`` metres wide.
+
+    Hard-coding a column count per panel makes the boarding visibly step at
+    every corner, because a 1 m panel and a 4 m panel end up with wildly
+    different plank widths.  Deriving it from a target width keeps one facade
+    consistent, and the floor of 3 guarantees every panel is wide enough to
+    show all three tones of a three-tone cycle.
+    """
+    return max(3, int(round(abs(length) / target)))
+
+
 def plank_wall(name, size, columns, tones, family="Prop"):
     """A wall box whose two long faces are split into ``columns`` vertical strips.
 
     A stock cube has a single polygon per side, so there is nothing to paint a
     stripe onto.  Splitting the long faces here is what buys the barn its pink
     accent bands and the sheds their weathered plank tones without a single
-    extra object.  ``tones`` is cycled column by column.
+    extra object.  ``tones`` is cycled column by column, so a tone may be
+    repeated in the sequence to make it more common -- ("barn_red", "barn_red",
+    "barn_pink") paints one accent band every third board.
 
     Built centred on the origin -- position it afterwards with ``place()``.
     """
@@ -104,6 +140,11 @@ def angled_slab(name, p0, p1, span, thickness, plane="xz", offset=0.0, lift=0.0,
     is how a roof panel sits *on* the rafter line instead of straddling it --
     order the points along the increasing in-plane axis (left to right, back to
     front) so that lift always points upward.
+
+    Anything that has to sit a fixed distance above a sloped surface -- roof
+    ribs on a roof panel, cleats on a ramp -- belongs in ``lift`` too.  Adding
+    the offset to the z of the endpoints instead shifts it *vertically*, which
+    is short by a factor of cos(pitch) and leaves an air gap.
     """
     (u0, v0), (u1, v1) = p0, p1
     du, dv = u1 - u0, v1 - v0
@@ -120,6 +161,33 @@ def angled_slab(name, p0, p1, span, thickness, plane="xz", offset=0.0, lift=0.0,
     loc = (offset, mu - math.sin(angle) * lift, mv + math.cos(angle) * lift)
     return cube(name, size=(span, length, thickness), loc=loc,
                 rot=(angle, 0.0, 0.0), color=color, family=family)
+
+
+def taper_batten(name, azimuth, p0, p1, span, thickness, shift=0.0, lift=0.0,
+                 color="wood_dark", family="Prop"):
+    """A board lying flat against a tapering lathe, at ``azimuth`` around it.
+
+    ``p0``/``p1`` are (radius, z) pairs, so the board leans with the taper
+    instead of standing plumb.  ``shift`` slides it tangentially and ``lift``
+    pushes it radially outward -- a small negative lift buries the inside face
+    in the facet, which is how a batten or a door reads as fixed *to* the wall
+    rather than hovering off it.
+
+    The euler is (0, pitch, azimuth): Blender's XYZ order applies the pitch in
+    the radial plane first and then swings the whole board round to its
+    azimuth, which is the one ordering that keeps the board tangential.
+    """
+    (r0, z0), (r1, z1) = p0, p1
+    dr, dz = r1 - r0, z1 - z0
+    length = math.hypot(dr, dz)
+    pitch = math.atan2(-dz, dr)
+    radius = (r0 + r1) / 2.0 + dz / length * lift
+    height = (z0 + z1) / 2.0 - dr / length * lift
+    loc = (math.cos(azimuth) * radius - math.sin(azimuth) * shift,
+           math.sin(azimuth) * radius + math.cos(azimuth) * shift,
+           height)
+    return cube(name, size=(length, span, thickness), loc=loc,
+                rot=(0.0, pitch, azimuth), color=color, family=family)
 
 
 def prism(name, outline, span, y=0.0, color=None, family="Prop"):
@@ -147,22 +215,50 @@ def prism(name, outline, span, y=0.0, color=None, family="Prop"):
     return from_points(name, verts, faces, color=color, family=family)
 
 
-def make_window(name, width, height, depth=0.16, frame="barn_trim"):
-    """Frame, glazing and a pair of mullions, joined and centred on the origin.
+def make_window(name, width, height, depth=0.12, frame="barn_trim"):
+    """Four frame bars around a real opening, glazed and mullioned.  Faces -Y.
 
-    Surface-mounted on purpose: cutting a hole in a wall costs geometry and
-    nobody can see through a window from twenty metres anyway.  Faces -Y.
+    The frame is deliberately NOT a solid box: a pane buried inside a solid
+    frame never renders, and the window ships as a cream slab with a cream
+    cross on it.  Front to back the stack is mullions (proud of the frame),
+    glass, then a dark board closing the back of the aperture so the glazing
+    always has an interior to read against whatever it is mounted on.
+
+    Mount it with ``window_mount()`` so the frame's back edge buries itself in
+    the wall while the backing board stays clear of the wall's own plane.
     """
+    bar = min(0.12, width * 0.24, height * 0.24)
+    open_w, open_h = width - 2.0 * bar, height - 2.0 * bar
+    hd = depth / 2.0
     parts = [
-        cube(f"{name}Frame", size=(width, depth, height), color=frame),
-        cube(f"{name}Pane", size=(width - 0.2, depth * 0.5, height - 0.2),
-             loc=(0.0, -0.02, 0.0), color="glass", family="Glass"),
-        cube(f"{name}MullionV", size=(0.07, depth * 0.9, height - 0.2),
-             loc=(0.0, -0.04, 0.0), color=frame),
-        cube(f"{name}MullionH", size=(width - 0.2, depth * 0.9, 0.07),
-             loc=(0.0, -0.04, 0.0), color=frame),
+        cube(f"{name}FrameTop", size=(width, depth, bar),
+             loc=(0.0, 0.0, (height - bar) / 2.0), color=frame),
+        cube(f"{name}FrameBot", size=(width, depth, bar),
+             loc=(0.0, 0.0, -(height - bar) / 2.0), color=frame),
+        cube(f"{name}FrameL", size=(bar, depth, open_h),
+             loc=(-(width - bar) / 2.0, 0.0, 0.0), color=frame),
+        cube(f"{name}FrameR", size=(bar, depth, open_h),
+             loc=((width - bar) / 2.0, 0.0, 0.0), color=frame),
+        cube(f"{name}Back", size=(open_w + 0.03, 0.03, open_h + 0.03),
+             loc=(0.0, hd - 0.02, 0.0), color=shade("wood_dark", 0.45)),
+        cube(f"{name}Pane", size=(open_w + 0.02, 0.025, open_h + 0.02),
+             loc=(0.0, hd - 0.07, 0.0), color="glass", family="Glass"),
+        cube(f"{name}MullionV", size=(0.06, 0.05, open_h + 0.02),
+             loc=(0.0, -hd - 0.005, 0.0), color=frame),
+        cube(f"{name}MullionH", size=(open_w + 0.02, 0.05, 0.06),
+             loc=(0.0, -hd - 0.005, 0.0), color=frame),
     ]
     return join(parts, name)
+
+
+def window_mount(face, depth=0.12):
+    """Where to put a window whose wall's outward face is at ``face``.
+
+    Buries the back 2 cm of the frame in the wall -- enough that no gap opens
+    behind it, little enough that the backing board stays in front of the
+    wall's own face and cannot z-fight with it.
+    """
+    return face - depth / 2.0 + 0.02
 
 
 def make_ladder(name, height, width=0.42, spacing=0.55, bar=0.06,
@@ -189,7 +285,12 @@ def make_ladder(name, height, width=0.42, spacing=0.55, bar=0.06,
 
 
 def sleeve(name, radius, z, thickness, segments, color, family="Metal"):
-    """An open band hugging a lathed body -- the hoops on the silo and tank."""
+    """An open band hugging a lathed body -- the hoops on the silo and tank.
+
+    Zero thickness, so the radius has to hug the *widest* point of the body it
+    wraps (or reach the ribs standing on it).  Float it further out and you see
+    straight past the band to the tank behind.
+    """
     return from_profile(name, [(radius, z - thickness / 2.0), (radius, z + thickness / 2.0)],
                         segments=segments, color=color, family=family,
                         close_bottom=False, close_top=False)
@@ -199,28 +300,41 @@ def sleeve(name, radius, z, thickness, segments, color, family="Metal"):
 # The barn
 # --------------------------------------------------------------------------
 def _barn_walls():
-    """Red-and-pink striped walls, built around a 3 x 3.4 m door opening."""
-    stripes = ("barn_red", "barn_pink")
+    """Red walls with a pink accent board every third column, around the door.
+
+    The two side walls run the full 12 m outer width; the back wall and the
+    front piers are short by a wall thickness and overlap 2 cm into them.  That
+    is what stops the four corners z-fighting: no two outward faces share the
+    x = +/-6 or y = +/-4.5 planes.
+    """
+    stripes = ("barn_red", "barn_red", "barn_pink")
     half_w, half_d = BARN_W / 2.0, BARN_D / 2.0
     inset = half_d - BARN_WALL_T / 2.0
+    butt = half_w - BARN_WALL_T + 0.02        # reach of the walls that butt between
     parts = []
 
     for side in (-1.0, 1.0):
-        wall = plank_wall(f"SideWall{side}", (BARN_D, BARN_WALL_T, BARN_WALL_H), 9, stripes)
+        wall = plank_wall(f"SideWall{side}", (BARN_D, BARN_WALL_T, BARN_WALL_H),
+                          plank_columns(BARN_D, 0.6), stripes)
         place(wall, loc=(side * (half_w - BARN_WALL_T / 2.0), 0.0, BARN_WALL_H / 2.0),
               rot=(0.0, 0.0, math.radians(90)))
         parts.append(wall)
 
-    back = plank_wall("BackWall", (BARN_W, BARN_WALL_T, BARN_WALL_H), 12, stripes)
+    back = plank_wall("BackWall", (butt * 2.0, BARN_WALL_T, BARN_WALL_H),
+                      plank_columns(butt * 2.0, 0.6), stripes)
     place(back, loc=(0.0, inset, BARN_WALL_H / 2.0))
     parts.append(back)
 
-    pier_w = (BARN_W - BARN_DOOR_W) / 2.0
+    pier_w = butt - BARN_DOOR_W / 2.0
     for side in (-1.0, 1.0):
-        pier = plank_wall(f"FrontPier{side}", (pier_w, BARN_WALL_T, BARN_WALL_H), 5, stripes)
+        pier = plank_wall(f"FrontPier{side}", (pier_w, BARN_WALL_T, BARN_WALL_H),
+                          plank_columns(pier_w, 0.6), stripes)
         place(pier, loc=(side * (BARN_DOOR_W / 2.0 + pier_w / 2.0), -inset, BARN_WALL_H / 2.0))
         parts.append(pier)
-    parts.append(cube("DoorHead", size=(BARN_DOOR_W, BARN_WALL_T, BARN_WALL_H - BARN_DOOR_H),
+    # Wider than the opening so its ends bury inside the piers rather than
+    # sharing their reveal faces.
+    parts.append(cube("DoorHead",
+                      size=(BARN_DOOR_W + 0.12, BARN_WALL_T, BARN_WALL_H - BARN_DOOR_H),
                       loc=(0.0, -inset, (BARN_WALL_H + BARN_DOOR_H) / 2.0), color="barn_red"))
 
     gable = [(-half_w, BARN_WALL_H), (-BARN_KNEE_X, BARN_KNEE_Z), (0.0, BARN_RIDGE_H),
@@ -235,9 +349,33 @@ def _barn_walls():
             parts.append(cube(f"Corner{sx}{sy}", size=(0.22, 0.22, BARN_WALL_H),
                               loc=(sx * (half_w - 0.08), sy * (half_d - 0.08), BARN_WALL_H / 2.0),
                               color="barn_trim"))
-        parts.append(cube(f"Fascia{sx}", size=(0.16, BARN_D + 0.9, 0.34),
-                          loc=(sx * (BARN_EAVE_X - 0.16), 0.0, BARN_EAVE_Z - 0.05),
+        # Tall enough that its top edge is buried in the roof slab across the
+        # whole 0.16 m of its width -- a shorter board hangs off the eave.
+        parts.append(cube(f"Fascia{sx}", size=(0.16, BARN_D + 0.9, 0.44),
+                          loc=(sx * (BARN_EAVE_X - 0.16), 0.0, BARN_EAVE_Z + 0.02),
                           color="barn_trim"))
+    return parts
+
+
+def _barn_eave_fill():
+    """The wedge between the wall top and the underside of the lower pitch.
+
+    The side walls stop flat at 5 m while the roof climbs away from them, so
+    without this there is a 9 m long slot of daylight above both eaves -- and
+    the barn is walk-in, so it is the first thing you see from inside.  Kept a
+    hair inside the wall's outer plane so the two never share a face.
+    """
+    outer = BARN_W / 2.0 - 0.015
+    inner = BARN_W / 2.0 - BARN_WALL_T - 0.02
+    span = BARN_D - 2.0 * BARN_WALL_T + 0.04           # ends buried in the gables
+    z_out = BARN_KNEE_Z - BARN_PITCH * (outer - BARN_KNEE_X) + 0.04
+    z_in = BARN_KNEE_Z - BARN_PITCH * (inner - BARN_KNEE_X) + 0.04
+    base = BARN_WALL_H - 0.06
+    parts = []
+    for side in (-1.0, 1.0):
+        outline = [(side * inner, base), (side * outer, base),
+                   (side * outer, z_out), (side * inner, z_in)]
+        parts.append(prism(f"EaveFill{side}", outline, span, color="barn_red"))
     return parts
 
 
@@ -263,7 +401,7 @@ def _barn_roof():
 
 def _barn_hayloft():
     """The loft doors high on the front gable, plus the hoist beam and pulley."""
-    face = -(BARN_D / 2.0 - BARN_WALL_T / 2.0) - BARN_WALL_T / 2.0
+    face = -BARN_D / 2.0
     z = 6.3
     parts = [cube("LoftOpening", size=(1.5, 0.12, 1.5), loc=(0.0, face - 0.05, z),
                   color=shade("wood_dark", 0.55))]
@@ -284,7 +422,12 @@ def _barn_hayloft():
 
 
 def _barn_doors():
-    """Both leaves swung flat against the facade so the opening stays clear."""
+    """Both leaves swung flat against the facade so the opening stays clear.
+
+    Front to back: leaf, then the diagonal braces 3 cm proud of it, then the
+    rails 3.5 cm proud of those.  Sharing one Y slab between the rails and the
+    braces flickers at all eight junctions where they cross.
+    """
     face = -(BARN_D / 2.0)
     parts = []
     for side in (-1.0, 1.0):
@@ -293,13 +436,13 @@ def _barn_doors():
         parts.append(cube(f"DoorLeaf{side}", size=(1.5, 0.12, BARN_DOOR_H),
                           loc=(side * 2.3, face - 0.07, BARN_DOOR_H / 2.0 + 0.05),
                           color="wood"))
+        for p0, p1 in (((inner + 0.03, 0.35), (outer - 0.03, BARN_DOOR_H - 0.2)),
+                       ((inner + 0.03, BARN_DOOR_H - 0.2), (outer - 0.03, 0.35))):
+            parts.append(angled_slab(f"DoorBrace{side}{p0[1]}", p0, p1, span=0.06,
+                                     thickness=0.16, offset=face - 0.13, color="barn_trim"))
         for rail_z in (0.3, BARN_DOOR_H - 0.15):
             parts.append(cube(f"DoorRail{side}{rail_z}", size=(1.44, 0.07, 0.16),
                               loc=(side * 2.3, face - 0.16, rail_z), color="barn_trim"))
-        for p0, p1 in (((inner + 0.03, 0.35), (outer - 0.03, BARN_DOOR_H - 0.2)),
-                       ((inner + 0.03, BARN_DOOR_H - 0.2), (outer - 0.03, 0.35))):
-            parts.append(angled_slab(f"DoorBrace{side}{p0[1]}", p0, p1, span=0.07,
-                                     thickness=0.16, offset=face - 0.16, color="barn_trim"))
 
     inset = -(BARN_D / 2.0 - BARN_WALL_T / 2.0)
     for side in (-1.0, 1.0):
@@ -339,14 +482,16 @@ def build_barn():
     really can walk in; the doors are modelled open and flat against the facade
     rather than filling the opening.
     """
-    parts = _barn_walls() + _barn_roof() + _barn_hayloft() + _barn_doors()
-    parts += _barn_weather_vane()
+    parts = _barn_walls() + _barn_eave_fill() + _barn_roof() + _barn_hayloft()
+    parts += _barn_doors() + _barn_weather_vane()
 
+    # The front windows sit outboard of the swung-open door leaves (which reach
+    # x = 3.05) so no two front-facing panels share an x plane.
     for name, loc, rot_z in (
-        ("WinFrontL", (-3.6, -(BARN_D / 2.0) - 0.03, 2.8), 0.0),
-        ("WinFrontR", (3.6, -(BARN_D / 2.0) - 0.03, 2.8), 0.0),
-        ("WinSideL", (-(BARN_W / 2.0) - 0.03, 0.6, 2.8), -90.0),
-        ("WinSideR", (BARN_W / 2.0 + 0.03, 0.6, 2.8), 90.0),
+        ("WinFrontL", (-4.15, window_mount(-BARN_D / 2.0), 2.8), 0.0),
+        ("WinFrontR", (4.15, window_mount(-BARN_D / 2.0), 2.8), 0.0),
+        ("WinSideL", (window_mount(-BARN_W / 2.0), 0.6, 2.8), -90.0),
+        ("WinSideR", (-window_mount(-BARN_W / 2.0), 0.6, 2.8), 90.0),
     ):
         win = make_window(name, 1.1, 1.3)
         place(win, loc=loc, rot=(0.0, 0.0, math.radians(rot_z)))
@@ -382,14 +527,19 @@ def build_silo():
     for i in range(12):
         angle = TAU * i / 12.0
         parts.append(cube(f"Rib{i}", size=(0.12, 0.1, 7.15),
-                          loc=(math.cos(angle) * SILO_R, math.sin(angle) * SILO_R, 3.58),
+                          loc=(math.cos(angle) * SILO_R, math.sin(angle) * SILO_R, 3.575),
                           rot=(0.0, 0.0, angle), color="metal_dark", family="Metal"))
 
+    # Inside the ribs' outer face (r = 1.66) so the bands are caught by them
+    # instead of floating a centimetre clear of everything.
     for z in (2.0, 4.2, 6.4):
-        parts.append(sleeve(f"Hoop{z}", SILO_R + 0.07, z, 0.18, SILO_SEGMENTS, "iron"))
+        parts.append(sleeve(f"Hoop{z}", SILO_R + 0.04, z, 0.18, SILO_SEGMENTS, "iron"))
 
+    # -Y is an edge midpoint on a 14-gon, not a vertex, so the skin is only
+    # 1.56 m out there: park the ladder against that, not against SILO_R.  Its
+    # rungs then pass through the rib at 270 degrees and read as fixed to it.
     ladder = make_ladder("SiloLadder", 6.6)
-    place(ladder, loc=(0.0, -(SILO_R + 0.08), 0.0))
+    place(ladder, loc=(0.0, -(SILO_R * math.cos(math.pi / SILO_SEGMENTS) + 0.04), 0.0))
     parts.append(ladder)
 
     parts.append(cylinder("Vent", radius=0.24, depth=0.36, verts=8, loc=(0.0, 0.0, 9.05),
@@ -411,9 +561,20 @@ def build_windmill():
     """A 7 m tapered octagonal tower -- 6.2 m of wall, the rest cap -- plus the rotor hub.
 
     The rotor ships as its own model (``windmill_blades``); mount it at
-    ``WINDMILL_HUB`` rotated -90 degrees about X so its local Z faces the player.
+    ``WINDMILL_HUB`` rotated +90 degrees about X, which maps its local +Z onto
+    -Y so the sails face the player and the rotor spins the right way round.
+    (-90 puts the sails on the far side of the frame and reverses the spin.)
     """
     radii = [(1.25, 0.0), (1.12, 1.6), (0.98, 3.2), (0.86, 4.8), (0.78, WINDMILL_H)]
+
+    def tower_radius(z):
+        """Radius of the octagon's vertices at height z -- what anything bolted
+        to the -Y face has to clear."""
+        for (r0, z0), (r1, z1) in zip(radii, radii[1:]):
+            if z <= z1:
+                return r0 + (r1 - r0) * (z - z0) / (z1 - z0)
+        return radii[-1][0]
+
     tower = from_profile("TowerBody", radii, segments=8, color="wood", family="Prop",
                          close_bottom=False)
     parts = [tower]
@@ -426,32 +587,45 @@ def build_windmill():
                             family="Prop"))
 
     # Corner battens follow the taper, so they lean with it rather than standing
-    # plumb like a fence post would.
+    # plumb like a fence post would.  All four sit on the DIAGONAL vertices of
+    # the octagon: a batten at -Y would stand straight down the middle of the
+    # door and through the window.
     base_r, top_r = radii[0][0], radii[-1][0]
-    for plane in ("xz", "yz"):
-        parts.append(angled_slab(f"Batten{plane}Low", (-base_r, 0.0), (-top_r, WINDMILL_H),
-                                 span=0.16, thickness=0.16, plane=plane, color="wood_dark"))
-        parts.append(angled_slab(f"Batten{plane}High", (top_r, WINDMILL_H), (base_r, 0.0),
-                                 span=0.16, thickness=0.16, plane=plane, color="wood_dark"))
+    for i in range(4):
+        azimuth = math.radians(45 + 90 * i)
+        parts.append(taper_batten(f"Batten{i}", azimuth, (base_r, 0.0), (top_r, WINDMILL_H),
+                                  span=0.16, thickness=0.16, lift=0.02, color="wood_dark"))
 
-    parts.append(cube("MillDoor", size=(0.95, 0.14, 1.95), loc=(0.0, -1.1, 0.98),
-                      color="wood_dark"))
+    # The door leans with the taper too and is buried 2 cm into the -Y vertex.
+    # Sitting it on a plumb plane at y = -1.1 lets the tower's own corner eat
+    # the bottom of it, right at eye height.
+    door_h, door_r0, door_r1 = 1.95, tower_radius(0.0), tower_radius(1.95)
+    face = math.radians(-90)
+    parts.append(taper_batten("MillDoor", face, (door_r0, 0.0), (door_r1, door_h),
+                              span=0.95, thickness=0.14, lift=0.04, color="wood_dark"))
     for side in (-1.0, 1.0):
-        parts.append(cube(f"MillDoorJamb{side}", size=(0.12, 0.16, 2.1),
-                          loc=(side * 0.53, -1.12, 1.05), color="barn_trim"))
-    parts.append(cube("MillDoorHead", size=(1.18, 0.16, 0.12), loc=(0.0, -1.12, 2.02),
+        parts.append(taper_batten(f"MillDoorJamb{side}", face,
+                                  (door_r0, 0.0), (tower_radius(2.1), 2.1),
+                                  span=0.12, thickness=0.16, shift=side * 0.53, lift=0.05,
+                                  color="barn_trim"))
+    head_r = tower_radius(2.05)
+    parts.append(cube("MillDoorHead", size=(1.2, 0.16, 0.13), loc=(0.0, -(head_r + 0.04), 2.05),
                       color="barn_trim"))
 
     win = make_window("MillWindow", 0.6, 0.6)
-    place(win, loc=(0.0, -0.94, 3.6))
+    place(win, loc=(0.0, window_mount(-tower_radius(3.6)), 3.6))
     parts.append(win)
 
+    # A chunky mounting block passes through the wall so the hub, standing off
+    # far enough for the sail tips to clear the tower, is not left in mid air.
     hub_x, hub_y, hub_z = WINDMILL_HUB
-    parts.append(cylinder("Hub", radius=0.34, depth=0.6, verts=10,
-                          loc=(hub_x, hub_y + 0.1, hub_z), rot=(math.radians(90), 0.0, 0.0),
+    parts.append(cube("HubBlock", size=(0.5, 0.66, 0.5), loc=(hub_x, hub_y + 0.42, hub_z),
+                      color="wood_dark"))
+    parts.append(cylinder("Hub", radius=0.34, depth=0.5, verts=10,
+                          loc=(hub_x, hub_y + 0.05, hub_z), rot=(math.radians(90), 0.0, 0.0),
                           color="wood_dark"))
     parts.append(cone("HubNose", r1=0.3, r2=0.1, depth=0.3, verts=8,
-                      loc=(hub_x, hub_y - 0.3, hub_z), rot=(math.radians(90), 0.0, 0.0),
+                      loc=(hub_x, hub_y - 0.14, hub_z), rot=(math.radians(90), 0.0, 0.0),
                       color="iron", family="Metal"))
 
     mill = join(parts, "Windmill")
@@ -466,31 +640,36 @@ def build_windmill_blades():
     """The four-sail rotor, origin at the hub, sails lying in the local XY plane.
 
     Keeping the sails in XY means the game spins this on its local Z and never
-    has to think about which way the tower faces.
+    has to think about which way the tower faces.  Local +Z is the FRONT of the
+    rotor: the cloth sits on that face of the lattice, not inside it, so mount
+    the rotor with +90 degrees about X to turn +Z toward the camera.
     """
     parts = [cylinder("BladeHub", radius=0.3, depth=0.26, verts=10, color="wood_dark")]
     for i in range(4):
         spin = math.radians(90 * i)
 
-        def spoke(x, y, a=spin):
+        def spoke(x, y, z=0.0, a=spin):
             """Blade-local offset moved onto the i-th spoke.
 
             The parts have to be *born* on their spoke: a cube keeps its origin
             at its own centre, so rotating one after the fact spins it in place
-            instead of swinging it around the hub.
+            instead of swinging it around the hub.  ``z`` is the rotor's own
+            front-to-back axis and is untouched by the spin.
             """
-            return (x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a), 0.0)
+            return (x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a), z)
 
         parts.append(cube(f"Spar{i}", size=(0.16, BLADE_LEN, 0.12),
                           loc=spoke(0.0, BLADE_LEN / 2.0 + 0.25), rot=(0.0, 0.0, spin),
                           color="wood"))
         for k in range(4):
-            parts.append(cube(f"Cross{i}{k}", size=(0.72, 0.1, 0.09),
+            parts.append(cube(f"Cross{i}{k}", size=(1.0, 0.1, 0.09),
                               loc=spoke(0.0, 0.55 + k * 0.8), rot=(0.0, 0.0, spin),
                               color="wood_dark"))
-        parts.append(cube(f"Sail{i}", size=(0.52, 2.5, 0.05),
-                          loc=spoke(0.29, BLADE_LEN / 2.0 + 0.35), rot=(0.0, 0.0, spin),
-                          color="barn_trim"))
+        # Cloth on the outboard half of the cross bars, sitting on the front
+        # face of the frame (z = 0.03..0.08) rather than buried inside it.
+        parts.append(cube(f"Sail{i}", size=(0.46, 2.6, 0.05),
+                          loc=spoke(0.32, BLADE_LEN / 2.0 + 0.25, 0.055),
+                          rot=(0.0, 0.0, spin), color="barn_trim"))
 
     rotor = join(parts, "WindmillBlades")
     apply_transform(rotor)
@@ -508,37 +687,52 @@ def build_shed():
 
     The pitch runs along X, which keeps the side walls plain rectangles and puts
     the slanted edge in the front and back walls where a triangular filler
-    handles it in eight triangles.
+    handles it in eight triangles.  The side walls run the full outer depth and
+    everything else butts between them.
     """
     planks = ("wood", "plank", "wood_light")
+    board = 0.34                                   # target plank width
     half_w, half_d = SHED_W / 2.0, SHED_D / 2.0
     thickness = 0.12
     face = half_d - thickness / 2.0
+    butt = half_w - thickness + 0.02               # reach of the front/back walls
     slope = (SHED_HIGH_H - SHED_LOW_H) / SHED_W
 
     parts = [cube("ShedFloor", size=(SHED_W - 0.1, SHED_D - 0.1, 0.12), loc=(0.0, 0.0, 0.06),
                   color="wood_dark")]
 
     door_min, door_max = -1.0, -1.0 + SHED_DOOR_W
-    left = plank_wall("ShedFrontL", (door_min + half_w, thickness, SHED_LOW_H), 2, planks)
-    place(left, loc=((-half_w + door_min) / 2.0, -face, SHED_LOW_H / 2.0))
-    right = plank_wall("ShedFrontR", (half_w - door_max, thickness, SHED_LOW_H), 5, planks)
-    place(right, loc=((door_max + half_w) / 2.0, -face, SHED_LOW_H / 2.0))
+    left_w, right_w = door_min + butt, butt - door_max
+    left = plank_wall("ShedFrontL", (left_w, thickness, SHED_LOW_H),
+                      plank_columns(left_w, board), planks)
+    place(left, loc=((-butt + door_min) / 2.0, -face, SHED_LOW_H / 2.0))
+    right = plank_wall("ShedFrontR", (right_w, thickness, SHED_LOW_H),
+                       plank_columns(right_w, board), planks)
+    place(right, loc=((door_max + butt) / 2.0, -face, SHED_LOW_H / 2.0))
     parts += [left, right]
-    parts.append(cube("ShedDoorHead", size=(SHED_DOOR_W, thickness, SHED_LOW_H - SHED_DOOR_H),
+    parts.append(cube("ShedDoorHead", size=(SHED_DOOR_W + 0.1, thickness, SHED_LOW_H - SHED_DOOR_H),
                       loc=(door_min + SHED_DOOR_W / 2.0, -face,
                            (SHED_LOW_H + SHED_DOOR_H) / 2.0), color="wood"))
 
-    back = plank_wall("ShedBack", (SHED_W, thickness, SHED_LOW_H), 10, planks)
+    back = plank_wall("ShedBack", (butt * 2.0, thickness, SHED_LOW_H),
+                      plank_columns(butt * 2.0, board), planks)
     place(back, loc=(0.0, face, SHED_LOW_H / 2.0))
     parts.append(back)
 
-    wedge = [(-half_w, SHED_LOW_H), (half_w, SHED_LOW_H), (half_w, SHED_HIGH_H)]
+    # The filler above the front and back walls: its top edge runs a few
+    # centimetres ABOVE the roof underside so it buries in the slab, and it is
+    # 1 cm thicker than the wall so the two never share an outward face.
+    wedge = [(-butt, SHED_LOW_H - 0.06), (butt, SHED_LOW_H - 0.06),
+             (butt, SHED_HIGH_H + 0.04), (-butt, SHED_LOW_H + 0.04)]
     for side in (-1.0, 1.0):
-        parts.append(prism(f"ShedWedge{side}", wedge, thickness, y=side * face, color="plank"))
+        parts.append(prism(f"ShedWedge{side}", wedge, thickness + 0.02, y=side * face,
+                           color="plank"))
 
-    for side, height in ((-1.0, SHED_LOW_H), (1.0, SHED_HIGH_H)):
-        wall = plank_wall(f"ShedSide{side}", (SHED_D, thickness, height), 7, planks)
+    # 5 cm over-height on the side walls: the roof underside climbs away from
+    # the wall line, and a wall that stops exactly on it leaves a slot.
+    for side, height in ((-1.0, SHED_LOW_H + 0.05), (1.0, SHED_HIGH_H + 0.05)):
+        wall = plank_wall(f"ShedSide{side}", (SHED_D, thickness, height),
+                          plank_columns(SHED_D, board), planks)
         place(wall, loc=(side * (half_w - thickness / 2.0), 0.0, height / 2.0),
               rot=(0.0, 0.0, math.radians(90)))
         parts.append(wall)
@@ -556,19 +750,20 @@ def build_shed():
                       loc=(half_w + overhang, 0.0, SHED_HIGH_H + overhang * slope - 0.06),
                       color="wood_dark"))
 
-    door = plank_wall("ShedDoor", (SHED_DOOR_W - 0.06, 0.08, SHED_DOOR_H - 0.05), 3,
-                      ("wood_dark", "wood"))
+    door = plank_wall("ShedDoor", (SHED_DOOR_W - 0.06, 0.08, SHED_DOOR_H - 0.05),
+                      plank_columns(SHED_DOOR_W - 0.06, 0.3), ("wood_dark", "wood"))
     place(door, loc=(door_min + SHED_DOOR_W / 2.0, -face - 0.09, (SHED_DOOR_H - 0.05) / 2.0))
     parts.append(door)
+    # Sunk into the leaf rather than parked on its front plane.
     for z in (0.4, 1.65):
         parts.append(cube(f"ShedHinge{z}", size=(0.3, 0.04, 0.08),
-                          loc=(door_min + 0.16, -face - 0.15, z), color="iron", family="Metal"))
+                          loc=(door_min + 0.16, -face - 0.13, z), color="iron", family="Metal"))
     parts.append(cylinder("ShedKnob", radius=0.05, depth=0.1, verts=6,
                           loc=(door_max - 0.16, -face - 0.16, 1.05),
                           rot=(math.radians(90), 0.0, 0.0), color="iron", family="Metal"))
 
-    win = make_window("ShedWindow", 0.75, 0.65, depth=0.12)
-    place(win, loc=(0.95, -face - 0.07, 1.5))
+    win = make_window("ShedWindow", 0.75, 0.65)
+    place(win, loc=(0.95, window_mount(-(half_d + thickness / 2.0)), 1.5))
     parts.append(win)
 
     shed = join(parts, "Shed")
@@ -585,10 +780,14 @@ def build_shed():
 def build_chicken_coop():
     """A 2 m coop on stubby legs: ramp, arched pop-hole, nesting box, pitched roof."""
     planks = ("wood_light", "plank", "wood")
+    board = 0.3
     half_w, half_d = COOP_W / 2.0, COOP_D / 2.0
     thickness = 0.1
     floor_z = COOP_LEG_H + 0.07
-    eave_z = floor_z + COOP_BODY_H
+    eave_z = floor_z + COOP_BODY_H                 # the line the roof is set out from
+    wall_h = COOP_BODY_H + 0.08                    # tops buried in the roof slab
+    butt = half_w - thickness + 0.02               # reach of the eave walls
+    roof_slope = (COOP_RIDGE_H - (eave_z - 0.08)) / (half_d + 0.14)
     parts = []
 
     for sx in (-1.0, 1.0):
@@ -599,15 +798,31 @@ def build_chicken_coop():
     parts.append(cube("CoopFloor", size=(COOP_W, COOP_D, 0.14), loc=(0.0, 0.0, floor_z - 0.07),
                       color="wood_dark"))
 
-    body_z = floor_z + COOP_BODY_H / 2.0
+    body_z = floor_z + wall_h / 2.0
     for side in (-1.0, 1.0):
-        front = plank_wall(f"CoopWallY{side}", (COOP_W, thickness, COOP_BODY_H), 5, planks)
+        # Eave walls, short by a wall thickness so they butt inside the gable walls.
+        front = plank_wall(f"CoopWallY{side}", (butt * 2.0, thickness, wall_h),
+                           plank_columns(butt * 2.0, board), planks)
         place(front, loc=(0.0, side * (half_d - thickness / 2.0), body_z))
         parts.append(front)
-        wall = plank_wall(f"CoopWallX{side}", (COOP_D, thickness, COOP_BODY_H), 4, planks)
+        wall = plank_wall(f"CoopWallX{side}", (COOP_D, thickness, wall_h),
+                          plank_columns(COOP_D, board), planks)
         place(wall, loc=(side * (half_w - thickness / 2.0), 0.0, body_z),
               rot=(0.0, 0.0, math.radians(90)))
         parts.append(wall)
+
+    # Gable triangles close the ends: the pitch runs across Y, so the wall tops
+    # under the ridge are 40 cm short of the roof without them.  Built as an XZ
+    # outline and swung 90 degrees so its extrusion lies along X.
+    ridge_top = COOP_RIDGE_H + 0.03
+    gable_half = (ridge_top - (floor_z + wall_h - 0.01)) / roof_slope
+    gable = [(-gable_half, ridge_top - roof_slope * gable_half),
+             (gable_half, ridge_top - roof_slope * gable_half), (0.0, ridge_top)]
+    for side in (-1.0, 1.0):
+        end = prism(f"CoopGable{side}", gable, thickness + 0.04, color="wood")
+        place(end, loc=(side * (half_w - thickness / 2.0), 0.0, 0.0),
+              rot=(0.0, 0.0, math.radians(90)))
+        parts.append(end)
 
     # Arched pop-hole: a round-topped outline, drawn once and inset into a cream surround.
     hole_w, sill, shoulder = 0.22, floor_z + 0.02, floor_z + 0.32
@@ -635,7 +850,9 @@ def build_chicken_coop():
     parts.append(cube("CoopRidge", size=(COOP_W + 0.36, 0.18, 0.1),
                       loc=(0.0, 0.0, COOP_RIDGE_H + 0.08), color=shade("barn_red", 0.8)))
 
-    # Ramp down to the ground, cleated so the birds get some grip.
+    # Ramp down to the ground, cleated so the birds get some grip.  The cleats
+    # clear the ramp's 7 cm top surface by half their own depth, so the whole
+    # 5 cm reads as a step instead of 1.5 cm poking out of the plank.
     ramp_bottom, ramp_top = (-half_d - 1.05, 0.0), (-half_d + 0.05, floor_z)
     parts.append(angled_slab("CoopRamp", ramp_bottom, ramp_top, span=0.5, thickness=0.07,
                              plane="yz", lift=0.035, color="wood"))
@@ -645,17 +862,17 @@ def build_chicken_coop():
         y = ramp_bottom[0] + (ramp_top[0] - ramp_bottom[0]) * t
         z = ramp_bottom[1] + (ramp_top[1] - ramp_bottom[1]) * t
         parts.append(cube(f"CoopCleat{i}", size=(0.5, 0.06, 0.05),
-                          loc=(0.0, y - math.sin(ramp_angle) * 0.06,
-                               z + math.cos(ramp_angle) * 0.06),
+                          loc=(0.0, y - math.sin(ramp_angle) * 0.09,
+                               z + math.cos(ramp_angle) * 0.09),
                           rot=(ramp_angle, 0.0, 0.0), color="wood_dark"))
 
     nest_z = floor_z + 0.42
     parts.append(cube("NestBox", size=(0.5, 1.05, 0.5), loc=(half_w + 0.2, 0.0, nest_z),
                       color="wood"))
-    parts.append(angled_slab("NestLid", (half_w - 0.12, nest_z + 0.34),
-                             (half_w + 0.52, nest_z + 0.2), span=1.15, thickness=0.07,
+    parts.append(angled_slab("NestLid", (half_w - 0.12, nest_z + 0.3),
+                             (half_w + 0.52, nest_z + 0.18), span=1.15, thickness=0.07,
                              color="barn_red"))
-    parts.append(cube("NestHinge", size=(0.1, 0.9, 0.05), loc=(half_w - 0.1, 0.0, nest_z + 0.32),
+    parts.append(cube("NestHinge", size=(0.12, 0.9, 0.06), loc=(half_w - 0.1, 0.0, nest_z + 0.3),
                       color="iron", family="Metal"))
 
     coop = join(parts, "ChickenCoop")
@@ -673,16 +890,20 @@ def build_water_tower():
     """A 6 m tank on four splayed, cross-braced legs, with a ladder up the front."""
     parts = []
     leg_run = math.hypot(TOWER_LEG_INSET * math.sqrt(2.0), TOWER_DECK_Z)
+    # A tilted leg is shorter in Z than it is long: centre it on half its
+    # VERTICAL extent, or all four feet end up 5 cm underground.
+    leg_len = leg_run + 0.1
+    leg_mid = leg_len * (TOWER_DECK_Z / leg_run) / 2.0
     for sx in (-1.0, 1.0):
         for sy in (-1.0, 1.0):
             # Each leg leans in on both axes; solve the euler that aims local +Z
             # straight at the deck corner rather than eyeballing two angles.
             rx = math.asin(sy * TOWER_LEG_INSET / leg_run)
             ry = math.asin(-sx * TOWER_LEG_INSET / (leg_run * math.cos(rx)))
-            parts.append(cube(f"TowerLeg{sx}{sy}", size=(0.18, 0.18, leg_run + 0.1),
+            parts.append(cube(f"TowerLeg{sx}{sy}", size=(0.18, 0.18, leg_len),
                               loc=(sx * (TOWER_LEG_SPREAD - TOWER_LEG_INSET / 2.0),
                                    sy * (TOWER_LEG_SPREAD - TOWER_LEG_INSET / 2.0),
-                                   TOWER_DECK_Z / 2.0),
+                                   leg_mid),
                               rot=(rx, ry, 0.0), color="wood", family="Prop"))
 
     ring_z = 1.9
@@ -702,24 +923,33 @@ def build_water_tower():
     deck = TOWER_DECK_Z
     tank = from_profile(
         "TankBody",
-        [(1.35, deck - 0.15), (1.5, deck + 0.05), (1.5, deck + 1.65), (1.35, deck + 1.85),
-         (0.85, deck + 2.15), (0.0, TOWER_TANK_TOP)],
+        [(1.35, deck - 0.15), (TOWER_TANK_R, deck + 0.05), (TOWER_TANK_R, deck + 1.65),
+         (1.35, deck + 1.85), (0.85, deck + 2.15), (0.0, TOWER_TANK_TOP)],
         segments=12, color="metal", family="Metal",
     )
     smooth(tank, 50)
     parts.append(tank)
     lid = select_faces(tank, lambda c, n: c.z > deck + 1.85)
     paint(tank, "metal_dark", family="Metal", faces=lid)
+    # 5 mm outside the tank's widest point: a hoop parked at 1.54 hovers up to
+    # 9 cm off the 12-gon's flats with nothing bridging the gap.
     for z in (deck + 0.45, deck + 1.25):
-        parts.append(sleeve(f"TankHoop{z}", 1.54, z, 0.16, 12, "iron"))
+        parts.append(sleeve(f"TankHoop{z}", TOWER_TANK_R + 0.005, z, 0.16, 12, "iron"))
     parts.append(cylinder("TankVent", radius=0.13, depth=0.32, verts=6,
                           loc=(0.0, 0.0, TOWER_TANK_TOP + 0.06), color="iron", family="Metal"))
-    parts.append(cylinder("DownPipe", radius=0.09, depth=deck - 0.1, verts=6,
-                          loc=(1.05, 1.05, (deck - 0.1) / 2.0), color="metal_dark",
+    # Inboard of the 12-gon's flats (1.449 m) and run 15 cm past the deck so the
+    # top of the pipe buries itself in the tank's shoulder instead of stopping
+    #13 cm short of it.
+    pipe_r = 1.3 / math.sqrt(2.0)
+    parts.append(cylinder("DownPipe", radius=0.09, depth=deck + 0.15, verts=6,
+                          loc=(pipe_r, pipe_r, (deck + 0.15) / 2.0), color="metal_dark",
                           family="Metal"))
 
-    ladder = make_ladder("TowerLadder", deck + 0.3, color="iron")
-    place(ladder, loc=(0.0, -(ring_r + 0.2), 0.0))
+    # Stopped 20 cm below the deck -- the tank's -Y vertex reaches out to 1.5 m,
+    # so a taller ladder swallows its own top rung -- and pulled in against the
+    # bracing ring so it has something to be bolted to.
+    ladder = make_ladder("TowerLadder", deck - 0.2, color="iron")
+    place(ladder, loc=(0.0, -(ring_r + 0.05), 0.0))
     parts.append(ladder)
 
     tower = join(parts, "WaterTower")
@@ -739,16 +969,17 @@ def build_hay_barn():
     the roof ribs are the only decoration that survives the triangle budget.
     """
     half_w, half_d = HAYBARN_W / 2.0, HAYBARN_D / 2.0
+    post_y = half_d - 0.3
     parts = []
 
     for x in (-half_w + 0.3, 0.0, half_w - 0.3):
-        for y in (-half_d + 0.3, half_d - 0.3):
+        for y in (-post_y, post_y):
             parts.append(cube(f"Post{x}{y}", size=(0.26, 0.26, HAYBARN_EAVE_Z),
                               loc=(x, y, HAYBARN_EAVE_Z / 2.0), color="wood"))
 
     for side in (-1.0, 1.0):
         parts.append(cube(f"EaveBeam{side}", size=(HAYBARN_W, 0.2, 0.3),
-                          loc=(0.0, side * (half_d - 0.3), HAYBARN_EAVE_Z - 0.15),
+                          loc=(0.0, side * post_y, HAYBARN_EAVE_Z - 0.15),
                           color="wood_dark"))
     parts.append(cube("RidgeBeam", size=(HAYBARN_W, 0.2, 0.28),
                       loc=(0.0, 0.0, HAYBARN_RIDGE_Z - 0.14), color="wood_dark"))
@@ -765,22 +996,27 @@ def build_hay_barn():
         panel = angled_slab(f"HayRoof{side}", p0, p1, span=HAYBARN_W + 0.6, thickness=0.12,
                             plane="yz", lift=0.06, color="metal", family="Metal")
         parts.append(panel)
-        # Ribs ride 0.18 m above the rafter line -- the panel itself is 0.12 thick,
-        # so anything less and the "corrugation" is buried inside the roof.
+        # Same rafter line as the panel, lifted PERPENDICULAR to it: the panel
+        # occupies 0 to 0.12 across its own thickness, so a rib lifted 0.14
+        # bites 1 cm into it.  Adding the offset to the z of the endpoints
+        # instead is short by cos(pitch) and leaves the ribs hovering.
         for i in range(5):
             x = -half_w - 0.2 + (HAYBARN_W + 0.4) * i / 4.0
-            parts.append(angled_slab(f"HayRib{side}{i}", (p0[0], p0[1] + 0.18),
-                                     (p1[0], p1[1] + 0.18), span=0.1, thickness=0.06,
-                                     plane="yz", offset=x, color="metal_dark", family="Metal"))
+            parts.append(angled_slab(f"HayRib{side}{i}", p0, p1, span=0.1, thickness=0.06,
+                                     plane="yz", offset=x, lift=0.14,
+                                     color="metal_dark", family="Metal"))
     parts.append(cube("HayRidgeCap", size=(HAYBARN_W + 0.6, 0.34, 0.14),
                       loc=(0.0, 0.0, HAYBARN_RIDGE_Z + 0.13), color="metal_dark",
                       family="Metal"))
 
-    # The back wall stops where the sloping roof crosses it, not at the eave.
-    back_y = half_d - 0.06
-    back_h = HAYBARN_RIDGE_Z - (HAYBARN_RIDGE_Z - HAYBARN_EAVE_Z) * (back_y / eave[0])
-    back = plank_wall("HayBackWall", (HAYBARN_W, 0.12, back_h), 10,
-                      ("wood", "plank", "wood_light"))
+    # Nailed to the back posts, not floating 5 cm behind them, and tall enough
+    # that its top edge is inside the roof slab at its own front face.
+    back_y = post_y
+    thickness = 0.12
+    slope = (HAYBARN_RIDGE_Z - HAYBARN_EAVE_Z) / eave[0]
+    back_h = HAYBARN_RIDGE_Z - slope * (back_y - thickness / 2.0) + 0.04
+    back = plank_wall("HayBackWall", (HAYBARN_W, thickness, back_h),
+                      plank_columns(HAYBARN_W, 0.55), ("wood", "plank", "wood_light"))
     place(back, loc=(0.0, back_y, back_h / 2.0))
     parts.append(back)
 

@@ -174,7 +174,14 @@ def _surface_material(family: str) -> bpy.types.Material:
         bsdf.inputs["Emission Strength"].default_value = spec["emission"]
     if "alpha" in spec:
         bsdf.inputs["Alpha"].default_value = spec["alpha"]
-        mat.blend_method = "BLEND"
+        # Material.blend_method was retired when EEVEE Next landed and replaced
+        # by surface_render_method.  The magnifier's lens is the first Glass part
+        # in the library, so this line is the first one to find out which build
+        # we are on; without the guard it takes the whole model down.
+        if hasattr(mat, "blend_method"):
+            mat.blend_method = "BLEND"
+        elif hasattr(mat, "surface_render_method"):
+            mat.surface_render_method = "BLENDED"
     return mat
 
 

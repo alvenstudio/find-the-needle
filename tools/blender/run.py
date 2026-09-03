@@ -71,4 +71,31 @@ def build_everything():
         print(f"FAILED: {', '.join(failed)}")
 
 
-print("run.py loaded -- call build('hay') or build_everything()")
+def build_and_sheet(module_name, keys, out_name=None, cell=280, columns=4, **preview_kwargs):
+    """Build each model and render the live scene -- the honest colour check.
+
+    Rendering the built datablocks sidesteps Blender's glTF importer, which only
+    wires the first primitive's colour attribute into its material and therefore
+    shows multi-material props as partly white.
+    """
+    preview_path = os.path.join(BLENDER_DIR, "preview.py")
+    ns = _kit_namespace()
+    exec(compile(open(preview_path, encoding="utf-8").read(), preview_path, "exec"), ns)
+
+    asset_path = os.path.join(ASSET_DIR, f"{module_name}.py")
+    exec(compile(open(asset_path, encoding="utf-8").read(), asset_path, "exec"), ns)
+    builders = ns["BUILDERS"]
+
+    rendered = []
+    for key in keys:
+        try:
+            ns["clear_scene"]()
+            builders[key]()
+            ns["preview_current"](key, resolution=cell, **preview_kwargs)
+            rendered.append(key)
+        except Exception:
+            traceback.print_exc()
+    return ns["tile"](rendered, out_name=out_name or module_name, cell=cell, columns=columns)
+
+
+print("run.py loaded -- build('hay') / build_everything() / build_and_sheet('tools', [...])")

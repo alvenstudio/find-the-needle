@@ -7,64 +7,81 @@ import { Signal } from './Signals';
  * is treated like a database schema: every shape change bumps `SAVE_VERSION`
  * and adds a migration, and a save that cannot be migrated is archived under a
  * separate key rather than silently thrown away.
+ *
+ * Note what is *not* in here. Cash, upgrade levels and owned tools belong to a
+ * run and die with it; only the run currently in progress is stored, so closing
+ * the tab mid-stack and coming back tomorrow resumes exactly where you were.
  */
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 const STORAGE_KEY = 'find-the-needle/save';
 const BACKUP_KEY = 'find-the-needle/save.broken';
-const AUTOSAVE_INTERVAL = 12;
+const AUTOSAVE_INTERVAL = 10;
 
-export interface StackProgress {
-  /** Seed the pile was generated from. */
+/** A run in progress, serialised. */
+export interface RunSnapshot {
+  tierId: string;
   seed: number;
-  /** Straw units removed so far. */
-  removed: number;
-  /** Ids of buried things already dug up in this stack. */
-  claimed: string[];
-  /** Seconds spent on this stack. */
+  /** Seconds of play in this run. */
   elapsed: number;
+  cash: number;
+  upgrades: Record<string, number>;
+  tools: string[];
+  activeTool: string;
+  /** Cubic metres of hay already taken out of the stack. */
+  removedVolume: number;
+  /** Ids of buried things already dug up. */
+  claimed: string[];
+  carried: number;
+  hayPulled: number;
+  goldenPulled: number;
+  pulls: number;
+  hunchesUsed: number;
 }
 
 export interface QuestState {
   id: string;
   progress: number;
   completed: boolean;
-  claimedAt: number;
+  claimed: boolean;
 }
 
 export interface SaveData {
   version: number;
   createdAt: number;
   updatedAt: number;
-
   playTime: number;
-  money: number;
+
+  /** The only currency that crosses a run boundary. */
   gems: number;
-
-  /** Upgrade id -> purchased level. */
-  upgrades: Record<string, number>;
-  unlockedTools: string[];
-  activeTool: string;
-
-  /** Index into the tier table; every tier at or below this is unlocked. */
-  tier: number;
-  stacks: Record<string, StackProgress>;
-
-  rebirths: number;
-  /** Treasure ids discovered across the whole save. */
+  /** Perk id -> purchased level. Permanent. */
+  perks: Record<string, number>;
+  /** Highest tier index the player may start a run on. */
+  unlockedTiers: number;
+  /** Treasure ids ever discovered. */
   collection: string[];
+
   quests: QuestState[];
   questDay: string;
 
+  /** The run in progress, or null when the player is between runs. */
+  run: RunSnapshot | null;
+
   stats: {
-    hayCollected: number;
-    haySold: number;
-    moneyEarned: number;
+    runs: number;
     needlesFound: number;
-    secretsFound: number;
+    hayPulled: number;
+    haySold: number;
+    cashEarned: number;
+    gemsEarned: number;
+    treasuresFound: number;
+    goldenPulled: number;
+    pulls: number;
     distanceWalked: number;
-    digs: number;
+    /** Fastest needle per tier, in seconds. */
     bestTimes: Record<string, number>;
+    /** Highest cleared fraction reached per tier, 0..1. */
+    bestClears: Record<string, number>;
   };
 
   settings: {
@@ -87,35 +104,35 @@ export function createSave(now = Date.now()): SaveData {
     createdAt: now,
     updatedAt: now,
     playTime: 0,
-    money: 0,
     gems: 0,
-    upgrades: {},
-    unlockedTools: ['hands'],
-    activeTool: 'hands',
-    tier: 0,
-    stacks: {},
-    rebirths: 0,
+    perks: {},
+    unlockedTiers: 0,
     collection: [],
     quests: [],
     questDay: '',
+    run: null,
     stats: {
-      hayCollected: 0,
-      haySold: 0,
-      moneyEarned: 0,
+      runs: 0,
       needlesFound: 0,
-      secretsFound: 0,
+      hayPulled: 0,
+      haySold: 0,
+      cashEarned: 0,
+      gemsEarned: 0,
+      treasuresFound: 0,
+      goldenPulled: 0,
+      pulls: 0,
       distanceWalked: 0,
-      digs: 0,
       bestTimes: {},
+      bestClears: {},
     },
     settings: {
       quality: 'auto',
       masterVolume: 0.85,
-      musicVolume: 0.5,
+      musicVolume: 0.45,
       sfxVolume: 1,
       sensitivity: 1,
       invertY: false,
-      fov: 72,
+      fov: 74,
       headBob: true,
       showFps: false,
       reducedMotion: false,
@@ -125,11 +142,47 @@ export function createSave(now = Date.now()): SaveData {
 
 type Migration = (data: Record<string, unknown>) => Record<string, unknown>;
 
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 /**
  * Migrations run in order from the save's version up to `SAVE_VERSION`.
  * Index 0 upgrades a version-0 file to version 1, and so on.
  */
-const MIGRATIONS: Migration[] = [];
+const MIGRATIONS: Migration[] = [
+  // 0 -> 1: no version-0 file ever shipped; treat it as a fresh save.
+  () => createSave() as unknown as Record<string, unknown>,
+
+  /**
+   * 1 -> 2: the persistent-bank model became per-run.
+   *
+   * Cash, upgrade levels, owned tools and the cash-gated tier ladder all went
+   * away. Gems, perks and the collection carry over untouched, and the tier the
+   * player had reached becomes the tier they may start a run on, so nobody
+   * loses access to a stack they had already earned.
+   */
+  (old) => {
+    const fresh = createSave() as unknown as Record<string, unknown>;
+    const stats = (old.stats ?? {}) as Record<string, unknown>;
+    fresh.gems = numberOr(old.gems, 0);
+    fresh.perks = (old.perks as Record<string, number>) ?? {};
+    fresh.unlockedTiers = numberOr(old.tier, 0);
+    fresh.collection = Array.isArray(old.collection) ? old.collection : [];
+    fresh.playTime = numberOr(old.playTime, 0);
+    fresh.createdAt = numberOr(old.createdAt, Date.now());
+
+    const target = fresh.stats as SaveData['stats'];
+    target.needlesFound = numberOr(stats.needlesFound, 0);
+    target.haySold = numberOr(stats.haySold, 0);
+    target.hayPulled = numberOr(stats.hayCollected, 0);
+    target.pulls = numberOr(stats.digs, 0);
+    target.treasuresFound = numberOr(stats.secretsFound, 0);
+    target.distanceWalked = numberOr(stats.distanceWalked, 0);
+    target.bestTimes = (stats.bestTimes as Record<string, number>) ?? {};
+    return fresh;
+  },
+];
 
 export class SaveManager {
   readonly saved = new Signal<SaveData>();
@@ -147,7 +200,7 @@ export class SaveManager {
     return this.data;
   }
 
-  /** Mark the save dirty; the next autosave tick will flush it. */
+  /** Mark the save dirty; the next autosave tick flushes it. */
   touch(): void {
     this.dirty = true;
   }
@@ -179,19 +232,23 @@ export class SaveManager {
     return this.data;
   }
 
-  /** Replace the whole save, e.g. from an imported string. */
   replace(data: SaveData): void {
     this.data = data;
     this.flush();
   }
 
+  /** Base64 of the UTF-8 JSON, safe for the clipboard. */
   export(): string {
-    return btoa(unescape(encodeURIComponent(JSON.stringify(this.data))));
+    const bytes = new TextEncoder().encode(JSON.stringify(this.data));
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
   }
 
   import(encoded: string): boolean {
     try {
-      const parsed = JSON.parse(decodeURIComponent(escape(atob(encoded.trim())))) as Record<string, unknown>;
+      const bytes = Uint8Array.from(atob(encoded.trim()), (character) => character.charCodeAt(0));
+      const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
       const migrated = migrate(parsed);
       if (!migrated) return false;
       this.replace(migrated);

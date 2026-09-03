@@ -245,8 +245,12 @@ def build_needle():
     """The hero object: 0.16 m of polished steel with a real punched eye."""
     shaft = needle_shaft("Shaft", "metal", 0.0055, 0.030)
     # A bleached tip sells "sharp" from further away than the taper alone does.
+    # The shaft's face-centre z values are -0.0707 (the tip fan), then -0.056,
+    # -0.032, -0.011, +0.013.  -0.050 sits in the gap between the second and
+    # third bands, so this takes the fan plus one band -- about 34 mm of bright
+    # point -- and is nowhere near a threshold that could flip on a rebuild.
     paint(shaft, "white", family="Metal",
-          faces=select_faces(shaft, lambda c, n: c.z < -0.058))
+          faces=select_faces(shaft, lambda c, n: c.z < -0.050))
 
     head = plate_with_hole(
         "Head",
@@ -284,10 +288,23 @@ def build_needle_golden():
     flat(head)
     bevel(head, NEEDLE_CHAMFER, NEEDLE_CHAMFER_SEGMENTS)
 
-    gem = faceted_gem("Stone", radius=0.011, height=0.024, sides=6, color="glass")
-    place(gem, loc=(0.0, 0.0, 0.090))
+    # The head's outer stadium tops out at z=0.080, so a stone dropped straight
+    # on top of it hangs in the air on its own pavilion tip.  A bezel does the
+    # same job the ring's setting does: a little flared cup rising out of the
+    # plate, its rim (r=0.0105) just inside the stone's girdle (r=0.011) so the
+    # stone visibly sits *in* something.  Its foot at z=0.0745 is buried in the
+    # plate, which is 0.0114 wide in x there.
+    bezel = from_profile("Bezel",
+                         [(0.0060, 0.0745), (0.0125, 0.0810), (0.0105, 0.0880)],
+                         segments=8, color="gold", family="Metal")
+    flat(bezel)
 
-    needle = join([shaft, collar, head, gem], "NeedleGolden")
+    gem = faceted_gem("Stone", radius=0.011, height=0.024, sides=6, color="glass")
+    # Girdle on the bezel rim; the pavilion tip at z=0.0765 sits down inside the
+    # cup rather than spiking through the head.
+    place(gem, loc=(0.0, 0.0, 0.0885))
+
+    needle = join([shaft, collar, head, bezel, gem], "NeedleGolden")
     centre_origin(needle)
     report(needle)
     export_glb(needle, "needle_golden")
@@ -326,8 +343,11 @@ def build_ufo():
     )
     smooth(lower, 46)
     # The tractor-beam glow on the belly costs nothing but a second paint pass.
+    # The belly is the pole fan, whose triangles centre on z=-0.10333 (one vert
+    # at -0.13, two on the -0.09 ring); the next band up centres at -0.0625.
+    # -0.10 lands cleanly between the two and takes the fan and nothing else.
     paint(lower, "ufo", family="Emit",
-          faces=select_faces(lower, lambda c, n: c.z < -0.105))
+          faces=select_faces(lower, lambda c, n: c.z < -0.10))
 
     canopy = from_profile(
         "Canopy",
@@ -367,6 +387,12 @@ def build_ufo():
         ))
 
     saucer = join(parts, "Ufo")
+    # Both hull halves end on a 14-vertex ring of UFO_RADIUS at z=0 at the same
+    # angles, so without this the rim exports as a doubled, non-manifold
+    # boundary loop -- a hairline seam under specular and 14 wasted verts.  The
+    # welded rim stays a hard edge: the two rings' normals differ by far more
+    # than the 46-degree smoothing angle.
+    merge_doubles(saucer, 0.0002)
     centre_origin(saucer)
     report(saucer)
     export_glb(saucer, "ufo")
@@ -470,9 +496,13 @@ def build_horseshoe():
         angle = math.radians(HORSESHOE_START_DEG + 18.0
                              + (HORSESHOE_END_DEG - HORSESHOE_START_DEG - 36.0)
                              * i / (NAIL_COUNT - 1))
+        # Heads stand 6 mm proud of the 24 mm-thick web (z 0.010..0.030 against
+        # a top face at 0.024).  Sunk flush they are invisible -- the shoe is
+        # solid iron, there is nothing to see them through -- and the six of
+        # them are a fifth of the model's triangles.
         nails.append(cylinder(
             f"Nail{i}", radius=0.0075, depth=0.020, verts=6,
-            loc=(math.cos(angle) * mid_radius, math.sin(angle) * mid_radius, 0.011),
+            loc=(math.cos(angle) * mid_radius, math.sin(angle) * mid_radius, 0.020),
             color="black", family="Metal",
         ))
 
@@ -537,16 +567,28 @@ def build_pocket_watch():
     parts.append(cylinder("Pin", radius=0.005, depth=0.006, verts=6,
                           loc=(0.0, 0.0, WATCH_DIAL_Z + 0.003), color="gold", family="Metal"))
 
+    # The case is a 12-sided lathe, so its wall at x=+/-0.009 has already fallen
+    # back to y=0.0556 -- a stem cap parked at the nominal 0.058 radius hangs
+    # off the facet.  Sink the near cap to y=0.054, inside the flat, and the far
+    # end still lands at 0.070 inside the bow's tube (0.066..0.076).
     parts.append(cylinder("Stem", radius=0.009, depth=0.016, verts=6,
-                          loc=(0.0, 0.066, 0.0), rot=(math.radians(90), 0.0, 0.0),
+                          loc=(0.0, 0.062, 0.0), rot=(math.radians(90), 0.0, 0.0),
                           color="gold", family="Metal"))
     bow = torus("Bow", major=0.015, minor=0.005, major_seg=8, minor_seg=3,
                 loc=(0.0, 0.086, 0.0), color="gold", family="Metal")
     smooth(bow, 50)
     parts.append(bow)
 
+    # A flat link only reaches 0.0139 along Y (major_seg=6 puts a facet, not a
+    # vertex, at 90 degrees) and an upright one reaches 0.004, so 20 mm centres
+    # leave a visible gap at every joint; 15 mm makes them overlap.  The sine
+    # nudge in X is what stops a "trailing" chain reading as a ruler.
     for i in range(WATCH_CHAIN_LINKS):
-        parts.append(chain_link(f"Link{i}", (0.0, 0.108 + i * 0.020, 0.0), upright=i % 2 == 1))
+        parts.append(chain_link(
+            f"Link{i}",
+            (math.sin(i * 0.8) * 0.006, 0.106 + i * 0.015, 0.0),
+            upright=i % 2 == 1,
+        ))
 
     # The lid hangs back off its hinge at the -Y rim rather than sitting shut,
     # so the dial stays visible in the reveal.  A positive X rotation carries
@@ -660,12 +702,19 @@ def build_bone():
     export_glb(bone, "bone")
 
 
-RING_RADIUS = 0.045
+# Like the needle and the coin, the ring is deliberately oversized -- 0.080 m
+# across the band, about 4x life size, which is the same factor the coin is
+# blown up by.  A true 20 mm ring vanishes in straw at the density the haystack
+# is built at.  It was 0.045/0.011 (a 0.112 m band, near 6x); that read as a
+# bracelet next to a life-size gnome, so it came down one step to sit in the
+# middle of the family rather than at the top of it.
+RING_RADIUS = 0.032
+RING_MINOR = 0.008
 
 
 def build_ring():
     """A gold band standing upright with a cyan stone in a raised setting."""
-    band = torus("Band", major=RING_RADIUS, minor=0.011, major_seg=ROUND_SEGMENTS,
+    band = torus("Band", major=RING_RADIUS, minor=RING_MINOR, major_seg=ROUND_SEGMENTS,
                  minor_seg=5, rot=(math.radians(90), 0.0, 0.0),
                  color="gold", family="Metal")
     smooth(band, 50)
@@ -673,14 +722,19 @@ def build_ring():
     # or it survives as a node rotation on the exported mesh.
     apply_transform(band)
 
-    setting = from_profile("Setting", [(0.014, RING_RADIUS - 0.004),
-                                       (0.019, RING_RADIUS + 0.008),
-                                       (0.013, RING_RADIUS + 0.016)],
+    # The setting's foot starts inside the band's tube (which spans
+    # RING_RADIUS +/- RING_MINOR) so there is no seam where cup meets band, and
+    # its rim stands 3 mm proud of the band's outer edge.
+    setting = from_profile("Setting", [(0.010, RING_RADIUS - 0.003),
+                                       (0.014, RING_RADIUS + 0.006),
+                                       (0.009, RING_RADIUS + 0.011)],
                            segments=6, color="gold", family="Metal")
     flat(setting)
 
-    stone = faceted_gem("Stone", radius=0.016, height=0.028, sides=6, color="glass")
-    place(stone, loc=(0.0, 0.0, RING_RADIUS + 0.028))
+    stone = faceted_gem("Stone", radius=0.011, height=0.020, sides=6, color="glass")
+    # Girdle 7 mm clear of the cup's rim, pavilion tip 3 mm down inside it: the
+    # stone has to be seen to be held, not balanced on a spike.
+    place(stone, loc=(0.0, 0.0, RING_RADIUS + 0.018))
 
     ring = join([band, setting, stone], "Ring")
     centre_origin(ring)
@@ -694,9 +748,11 @@ def build_ring():
 def build_chest():
     """The 0.9 m body: a banded wooden box on four feet, lock plate at -Y.
 
-    The back gets a hinge plate at exactly the depth of the front lock plate,
-    which is not only true to how a chest is built but also keeps the bounding
-    box symmetric so ``CHEST_HINGE_OFFSET`` stays an exact number.
+    The back gets a hinge plate reaching exactly as far into +Y as the
+    frontmost thing on the lock reaches into -Y, which is not only true to how
+    a chest is built but also keeps the bounding box symmetric so
+    ``CHEST_HINGE_OFFSET`` stays an exact number.  Move anything on the front
+    face and the hinge plate has to move with it.
     """
     body_height = CHEST_BODY_TOP - CHEST_FOOT_HEIGHT
     box = cube("Box", size=(CHEST_HALF_WIDTH * 2, CHEST_HALF_DEPTH * 2, body_height),
@@ -714,30 +770,47 @@ def build_chest():
             parts.append(cube("Batten", size=(CHEST_HALF_WIDTH * 2 - 0.02, 0.012, 0.018),
                               loc=(0.0, y, z), color="wood_dark"))
 
-    # Bands sit proud in Y but flush in Z: anything taller than the box would
-    # push the bounding box past CHEST_BODY_TOP and shift the hinge offset.
+    # Bands sit proud in Y but *short* in Z.  Flush would put their top faces on
+    # z=0.48, exactly coplanar with the box's top quad (the 0.015 bevel insets
+    # that quad but does not lower it), and the lid is a separate model that
+    # swings open -- so that z-fight would be on screen the first time anybody
+    # opens the chest.  2 mm off each end clears both planes and still leaves
+    # the body topping out at CHEST_BODY_TOP, so CHEST_HINGE_OFFSET is exact.
     for x in CHEST_BAND_X:
-        parts.append(cube("Band", size=(0.07, CHEST_HALF_DEPTH * 2 + 0.03, body_height),
+        parts.append(cube("Band", size=(0.07, CHEST_HALF_DEPTH * 2 + 0.03, body_height - 0.004),
                           loc=(x, 0.0, CHEST_FOOT_HEIGHT + body_height * 0.5),
                           color="iron", family="Metal"))
 
+    # Feet run 4 mm up into the box for the same reason the bands stop short of
+    # its top: a foot exactly CHEST_FOOT_HEIGHT tall puts its cap on z=0.06,
+    # coplanar with the box's underside.  The bottoms still sit on z=0, so the
+    # model's footprint and overall height are unchanged.
     for x in (-CHEST_HALF_WIDTH + 0.05, CHEST_HALF_WIDTH - 0.05):
         for y in (-CHEST_HALF_DEPTH + 0.05, CHEST_HALF_DEPTH - 0.05):
-            parts.append(cube("Foot", size=(0.10, 0.10, CHEST_FOOT_HEIGHT),
-                              loc=(x, y, CHEST_FOOT_HEIGHT * 0.5), color="wood_dark"))
+            parts.append(cube("Foot", size=(0.10, 0.10, CHEST_FOOT_HEIGHT + 0.004),
+                              loc=(x, y, (CHEST_FOOT_HEIGHT + 0.004) * 0.5),
+                              color="wood_dark"))
 
     parts.append(cube("LockPlate", size=(0.16, 0.045, 0.15),
                       loc=(0.0, -CHEST_HALF_DEPTH, 0.36), color="gold", family="Metal"))
-    # Keyhole sunk 1.5 mm behind the plate face so it reads as a hole and never
-    # z-fights with it.
-    parts.append(cylinder("Keyhole", radius=0.018, depth=0.024, verts=6,
-                          loc=(0.0, -CHEST_HALF_DEPTH - 0.0090, 0.375),
+    # The keyhole stands 5 mm PROUD of the plate's front face (y=-0.2725), with
+    # 1 mm buried in it.  There is no boolean here, so a "hole" sunk behind an
+    # opaque gold plate is simply a hole nobody can see; a shallow black
+    # escutcheon in front of it is the read, and 6 mm deep it is a plate, not a
+    # peg sticking out of the chest.
+    keyhole_y = -CHEST_HALF_DEPTH - 0.0245
+    parts.append(cylinder("Keyhole", radius=0.018, depth=0.006, verts=6,
+                          loc=(0.0, keyhole_y, 0.375),
                           rot=(math.radians(90), 0.0, 0.0), color="black", family="Metal"))
-    parts.append(cube("KeyholeSlot", size=(0.016, 0.024, 0.035),
-                      loc=(0.0, -CHEST_HALF_DEPTH - 0.0090, 0.352),
+    parts.append(cube("KeyholeSlot", size=(0.016, 0.006, 0.035),
+                      loc=(0.0, keyhole_y, 0.352),
                       color="black", family="Metal"))
-    parts.append(cube("HingePlate", size=(0.24, 0.045, 0.10),
-                      loc=(0.0, CHEST_HALF_DEPTH, CHEST_BODY_TOP - 0.06),
+    # The hinge plate is what makes CHEST_HINGE_OFFSET an exact number: it has
+    # to reach as far into +Y as the deepest thing on the front does into -Y, or
+    # centre_origin lands the pivot off the chest's own centre line.  The
+    # escutcheon above now stands out to -0.2775, so this reaches +0.2775.
+    parts.append(cube("HingePlate", size=(0.24, 0.050, 0.10),
+                      loc=(0.0, CHEST_HALF_DEPTH + 0.0025, CHEST_BODY_TOP - 0.06),
                       color="iron", family="Metal"))
 
     chest = join(parts, "Chest")
@@ -860,13 +933,25 @@ def build_gnome():
                   loc=(0.0, 0.0, GNOME_HEAD_Z), color="skin")
     smooth(head, 50)
     parts.append(head)
+    # The nose is the whole reason a gnome reads as a gnome, so it gets pushed
+    # out until the tip (y=-0.105) is well clear of anything the beard can
+    # reach, and lifted just above the head centre.  Its base plane at y=-0.055
+    # is still inside the head (which is 0.040 across at that depth), so it is
+    # a nose growing out of a face and not a cone parked next to one.
     parts.append(cone("Nose", r1=0.026, r2=0.0, depth=0.050, verts=6,
-                      loc=(0.0, -0.066, GNOME_HEAD_Z - 0.005),
+                      loc=(0.0, -0.080, GNOME_HEAD_Z + 0.005),
                       rot=(math.radians(90), 0.0, 0.0), color="skin"))
 
     # Beard is a cone standing on its point: wide under the nose, tapering down.
-    beard = cone("Beard", r1=0.020, r2=0.088, depth=0.140, verts=10,
-                 loc=(0.0, -0.020, 0.255), color="white")
+    # Two numbers matter.  Its top (z=0.295) is below the lowest point of the
+    # nose (z=0.294 at the base rim, and the tip is 25 mm further out in Y), so
+    # the nose is never swallowed.  And it is centred at y=-0.058 rather than
+    # -0.020, so the beard hangs *over* the coat -- the coat bulges to y=-0.105
+    # at chest height and a beard on the body axis simply disappears inside it.
+    # It is proud of the coat from z=0.218 up, which is 77 mm of visible beard.
+    # Its bottom cap is inside the coat and above the buckle, so no tip floats.
+    beard = cone("Beard", r1=0.024, r2=0.072, depth=0.120, verts=10,
+                 loc=(0.0, -0.058, 0.235), color="white")
     smooth(beard, 44)
     parts.append(beard)
 
