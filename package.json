@@ -17,7 +17,11 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
     "@types/three": "^0.185.4",
+    "meshoptimizer": "^1.2.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }

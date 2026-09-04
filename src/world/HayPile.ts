@@ -71,7 +71,7 @@ const MIN_VISIBLE_HEIGHT = 0.03;
 /** How far the player must move before the detail band is re-seeded. */
 const BAND_REBUILD_DISTANCE = 0.42;
 
-const STRAW_TINTS = [0xfff0c0, 0xf7e0a4, 0xe8ca7d, 0xd8b463, 0xc9a352, 0xb99544];
+const STRAW_TINTS = [0xfff1b4, 0xfbe294, 0xf0cd6e, 0xdfb551, 0xcda140, 0xb98f33];
 
 export class HayPile {
   readonly group = new Group();
@@ -128,7 +128,7 @@ export class HayPile {
     const footprint = Math.PI * options.radius * options.radius;
     const shellCount = Math.max(
       256,
-      Math.min(options.shellBudget, Math.ceil(footprint * (options.shellDensity ?? 30))),
+      Math.min(options.shellBudget, Math.ceil(footprint * (options.shellDensity ?? 120))),
     );
 
     this.anchorX = new Float32Array(shellCount);
@@ -311,8 +311,8 @@ export class HayPile {
     geometry.setIndex(new BufferAttribute(indices, 1));
 
     // Colour varies with height so the crown reads lighter than the shaded skirt.
-    const light = new Color(0xf3dda2);
-    const dark = new Color(0xa8853f);
+    const light = new Color(0xf0cd76);
+    const dark = new Color(0xb0862f);
     const tint = new Color();
     for (let index = 0; index < vertexCount; index++) {
       const t = clamp01(this.field.heights[index] / Math.max(this.field.peak, 0.001));
@@ -609,7 +609,7 @@ function createCoreMaterial(): MeshStandardMaterial {
   });
 
   return stylize(material, {
-    rim: 0.2,
+    rim: 0.12,
     cacheKey: 'haycore',
     extend: (shader) => {
       shader.uniforms.uTime = getSharedUniforms().uTime;
@@ -628,10 +628,10 @@ function createCoreMaterial(): MeshStandardMaterial {
     float ftnDist = length(vViewPosition);
     vec2 ftnUv = vFtnWorld.xz + vFtnWorld.y * 0.45;
     float ftnFade = 1.0 - smoothstep(3.0, 14.0, ftnDist);
-    float ftnDetail = ftnFibre(ftnUv, 5.5) * 0.6
-                    + ftnFibre(ftnUv + 3.7, 13.0) * 0.28 * ftnFade
-                    + ftnFibre(ftnUv - 1.3, 31.0) * 0.12 * ftnFade * ftnFade;
-    diffuseColor.rgb *= mix(0.78, 1.14, ftnDetail);
+    float ftnDetail = ftnFibre(ftnUv, 3.1) * 0.55
+                    + ftnFibre(ftnUv + 3.7, 8.7) * 0.3 * ftnFade
+                    + ftnFibre(ftnUv - 1.3, 21.0) * 0.15 * ftnFade * ftnFade;
+    diffuseColor.rgb *= mix(0.86, 1.08, ftnDetail);
   }`,
         );
     },
@@ -645,5 +645,5 @@ function createStrawMaterial(): MeshStandardMaterial {
     metalness: 0,
   });
   // A whisper of wind so the loose coat shimmers; the core stays rigid.
-  return stylize(material, { rim: 0.42, wind: 0.01, windAnchor: -0.5, cacheKey: 'straw' });
+  return stylize(material, { rim: 0.15, wind: 0.01, windAnchor: -0.5, cacheKey: 'straw' });
 }

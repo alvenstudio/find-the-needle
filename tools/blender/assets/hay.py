@@ -54,14 +54,14 @@ def sweep_rect(name, spine, half_w, half_h, color=None, family="Prop", caps=True
 
 
 def build_straw():
-    """A single sliver of straw: 0.38 m long, flat, with a lazy S-bend.
+    """A single sliver of straw: 0.32 m long, flat, with a lazy S-bend.
 
     Deliberately wide and flat rather than round. Sixteen thousand of these tile
     the surface of the pile, and a flat sliver covers roughly four times the
     area of a round stalk of the same length for the same instance cost -- and
     per-instance overhead, not triangles, is what the pile is bound by.
     """
-    length = 0.38
+    length = 0.32
     stations = 4
     spine = []
     for i in range(stations):
@@ -75,10 +75,16 @@ def build_straw():
     for i in range(stations):
         t = i / (stations - 1)
         girth = 0.4 + 0.6 * math.sin(min(max(t, 0.0), 1.0) * math.pi) ** 0.5
-        half_w.append(0.031 * girth)
-        half_h.append(0.008 * girth)
+        half_w.append(0.019 * girth)
+        half_h.append(0.007 * girth)
 
     straw = sweep_rect("Straw", spine, half_w, half_h, color="straw", family="Prop")
+    # Lay it down. The sweep runs along Blender's +Z, which the glTF Y-up
+    # conversion turns into +Y -- straight up, so an unrotated straw stands on
+    # end like a spike. Rotating here rather than in the game keeps the runtime
+    # matrix for sixteen thousand instances down to a yaw and a small tilt.
+    place(straw, rot=(math.radians(90), 0.0, 0.0))
+    apply_transform(straw)
     # A darker crease down one face catches the light and sells the fibre.
     crease = select_faces(straw, lambda c, n: n.x < -0.6)
     paint(straw, "straw_mid", faces=crease)

@@ -230,13 +230,17 @@ export class Meta {
    * doing, which is why neither reward dominates.
    */
   finishRun(run: Run, foundNeedle: boolean, clearedFraction: number, treasureGems: number): RunSummary {
+    // `treasureGems` is a report, not a payment: each oddity paid out when the
+    // player walked into it, because a reward that arrives minutes later is not
+    // a reward for the thing you just did.
     const tier = run.tier;
     const seconds = run.elapsed;
 
     const gemsFromNeedle = foundNeedle ? tier.needleGems : 0;
     const gemsFromClear = clearedFraction >= 0.999 ? tier.clearGems : 0;
     const gemsFromTime = Math.floor((seconds / 60) * GEMS_PER_MINUTE);
-    const gemsTotal = gemsFromNeedle + gemsFromClear + gemsFromTime + treasureGems;
+    const gemsBanked = gemsFromNeedle + gemsFromClear + gemsFromTime;
+    const gemsTotal = gemsBanked + treasureGems;
 
     let newBestTime = false;
     if (foundNeedle) {
@@ -250,7 +254,7 @@ export class Meta {
     }
     this.recordClear(clearedFraction, tier.id);
     this.save.stats.runs += 1;
-    this.addGems(gemsTotal);
+    this.addGems(gemsBanked);
 
     let unlockedTier: TierDefinition | null = null;
     const index = TIERS.findIndex((entry) => entry.id === tier.id);

@@ -1,6 +1,7 @@
 import {
   AnimationClip,
   Box3,
+  BufferAttribute,
   BufferGeometry,
   Mesh,
   Object3D,
@@ -122,6 +123,8 @@ export class Assets {
     });
 
     root.updateMatrixWorld(true);
+    if (!skinned) flattenTransforms(root, meshes);
+    root.updateMatrixWorld(true);
     const bounds = new Box3().setFromObject(root);
     const size = bounds.getSize(new Vector3());
     const boundingSphere = bounds.getBoundingSphere(new Sphere());
@@ -142,6 +145,7 @@ export class Assets {
     };
   }
 
+  /** Swap a Blender material for the shared instance of its surface family. */
   private resolveMaterial(material: Material, entry: AssetManifestEntry): Material {
     const family = familyFromName(material.name ?? '');
     if (entry.variant) {
@@ -217,4 +221,63 @@ export class Assets {
     }
     this.models.clear();
   }
+}
+
+/**
+ * Bake every node transform into its geometry and flatten the hierarchy.
+ *
+ * `geometryOf` hands raw geometry to an `InstancedMesh`, which knows nothing
+ * about the node it came from - so any transform sitting on that node is
+ * silently dropped. Blender rarely leaves one, but `KHR_mesh_quantization`
+ * *always* does: quantised positions are integers and the decode scale lives on
+ * the node, so without this an optimised straw arrives at three times its
+ * intended size.
+ *
+ * Skinned meshes are left alone: their vertices are bound to a skeleton and the
+ * bind matrices would no longer agree. Geometry can also be shared between
+ * nodes, so each one is transformed at most once.
+ */
+function flattenTransforms(root: Object3D, meshes: readonly Mesh[]): void {
+  const done = new Set<BufferGeometry>();
+  for (const mesh of meshes) {
+    if (done.has(mesh.geometry)) continue;
+    done.add(mesh.geometry);
+    // Positions and normals must leave quantised storage before the transform
+    // touches them. `applyMatrix4` writes results straight back into the
+    // attribute's array, so a normalised Int16 position scaled up by six is
+    // silently clamped to the edge of its range - which turns a twelve-metre
+    // barn into a two-metre cube and looks, maddeningly, like a units bug.
+    dequantize(mesh.geometry, 'position');
+    dequantize(mesh.geometry, 'normal');
+    mesh.geometry.applyMatrix4(mesh.matrixWorld);
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+  }
+  root.traverse((node) => {
+    node.position.set(0, 0, 0);
+    node.quaternion.identity();
+    node.scale.set(1, 1, 1);
+    node.updateMatrix();
+  });
+}
+
+/**
+ * Replace an integer attribute with a plain float one.
+ *
+ * `getX`/`getY`/`getZ` denormalise on the way out, so reading through them is
+ * exactly the dequantisation step and needs no knowledge of the storage type.
+ * Colours are deliberately left quantised: the shader reads them normalised and
+ * nothing transforms them.
+ */
+function dequantize(geometry: BufferGeometry, name: 'position' | 'normal'): void {
+  const attribute = geometry.getAttribute(name) as BufferAttribute | undefined;
+  if (!attribute || attribute.array instanceof Float32Array) return;
+
+  const values = new Float32Array(attribute.count * attribute.itemSize);
+  for (let i = 0; i < attribute.count; i++) {
+    values[i * 3] = attribute.getX(i);
+    values[i * 3 + 1] = attribute.getY(i);
+    values[i * 3 + 2] = attribute.getZ(i);
+  }
+  geometry.setAttribute(name, new BufferAttribute(values, attribute.itemSize));
 }

@@ -206,7 +206,7 @@ export class Particles {
   constructor(assets: Assets, budget: ParticleBudget) {
     const strawMaterial = stylize(
       new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 }),
-      { rim: 0.5 },
+      { rim: 0.22 },
     );
     const strawGeometry = assets.has('hay_wisp') ? assets.geometryOf('hay_wisp') : assets.geometryOf('straw');
     this.straw = new Pool(new InstancedMesh(strawGeometry, strawMaterial, budget.straw), budget.straw);

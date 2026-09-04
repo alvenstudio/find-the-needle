@@ -80,7 +80,7 @@ export class Terrain {
     this.geometry = this.build();
     const material = stylize(
       new MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0 }),
-      { rim: 0.12 },
+      { rim: 0.05 },
     );
     this.mesh = new Mesh(this.geometry, material);
     this.mesh.receiveShadow = true;

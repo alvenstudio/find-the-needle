@@ -127,7 +127,7 @@ export function advanceSharedUniforms(elapsed: number, windStrength: number): vo
 
 /** Patch a material with the stylised extras. Returns the same instance. */
 export function stylize<T extends Material>(material: T, options: StylizedOptions = {}): T {
-  const rim = options.rim ?? 0.34;
+  const rim = options.rim ?? 0.16;
   const wind = options.wind ?? 0;
   const windAnchor = options.windAnchor ?? 0;
   const emissiveFromColor = options.emissiveFromColor ?? false;
@@ -191,11 +191,20 @@ export function stylize<T extends Material>(material: T, options: StylizedOption
   return material;
 }
 
+/**
+ * Rim strengths are deliberately low.
+ *
+ * The rim term peaks at grazing angles, and in a first-person game the ground
+ * and anything else the player is standing on top of is *entirely* grazing
+ * angles. At the 0.35 that looked right on a turntable, a haystack seen from
+ * forty centimetres washes out to pale blue. These values put the rim back
+ * where it belongs: on silhouettes.
+ */
 const FAMILY_DEFAULTS: Record<SurfaceFamily, StylizedOptions> = {
-  Prop: { rim: 0.34 },
-  Metal: { rim: 0.6 },
-  Foliage: { rim: 0.26, wind: 0.05 },
-  Glass: { rim: 1.1 },
+  Prop: { rim: 0.16 },
+  Metal: { rim: 0.34 },
+  Foliage: { rim: 0.14, wind: 0.05 },
+  Glass: { rim: 0.8 },
   Emit: { rim: 0, emissiveFromColor: true },
 };
 

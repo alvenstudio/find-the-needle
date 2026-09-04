@@ -350,6 +350,7 @@ def from_points(name: str, verts, faces, color=None, family="Prop") -> bpy.types
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(obj)
     _activate(obj)
+    recalc_normals(obj)
     if color is not None:
         paint(obj, color, family)
     return obj
@@ -449,6 +450,23 @@ def set_origin(obj: bpy.types.Object, point=(0.0, 0.0, 0.0)) -> bpy.types.Object
     offset = obj.matrix_world.translation - Vector(point)
     obj.data.transform(Matrix.Translation(offset))
     obj.matrix_world.translation = Vector(point)
+    return obj
+
+
+def recalc_normals(obj: bpy.types.Object, inside=False) -> bpy.types.Object:
+    """Make every face point outward.
+
+    Hand-written face lists get their winding wrong sooner or later, and an
+    inside-out face is not invisible -- it is lit from behind and renders as a
+    solid black shard in the middle of an otherwise clean model. Rather than
+    deriving the correct order for every sweep and lathe by hand, everything
+    built from raw vertex data goes through this.
+    """
+    _activate(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.normals_make_consistent(inside=inside)
+    bpy.ops.object.mode_set(mode="OBJECT")
     return obj
 
 

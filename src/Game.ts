@@ -91,11 +91,18 @@ export class Game {
 
   /** Seconds of continuous-tool use since the last golden-bundle roll. */
   private streamAccumulator = 0;
+  /** Gems banked from treasures this run, for the summary breakdown. */
+  private runTreasureGems = 0;
   /** Seconds left on the Hunch arrow. */
   private hunchTimer = 0;
   private readonly hunchDirection = new Vector3();
   private detectorTimer = 0;
+  private lastBagWarning = -99;
   private elapsed = 0;
+  /** True once the browser has actually granted pointer lock at least once. */
+  private wasLocked = false;
+  /** When the current lock was granted, for telling Escape from a browser quirk. */
+  private lockedAt = 0;
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     const settings = this.save.state.settings;
@@ -180,9 +187,15 @@ export class Game {
     });
   }
 
+  /** Movement is enabled whenever the player is in the world and unblocked. */
+  private syncControl(): void {
+    this.player.controlEnabled = this.state === 'playing' && !this.ui.modalOpen;
+  }
+
   private beginPlaying(): void {
     this.state = 'playing';
     this.ui.showHud();
+    this.syncControl();
     void this.audio.unlock().then(() => {
       this.audio.setAmbience(this.currentTier.mood);
       this.audio.setMusic(this.save.state.settings.musicVolume > 0);
@@ -236,12 +249,28 @@ export class Game {
     this.environment.setMood(tier.mood);
     this.buildScenery();
 
-    // Spawn on the near side of the ring, facing the stack across open ground.
-    const spawnRadius = tier.radius + 11;
-    this.player.teleport(0, spawnRadius, 0);
+    // Arrive on the spawn pad, which sits just behind the cow, and look across
+    // the yard at the stack. Landing next to the sell point keeps the first
+    // fill-and-sell loop short, which is the loop that has to teach itself.
+    const spawn = this.spawnPoint();
+    this.player.teleport(spawn.x, spawn.z, Math.atan2(spawn.x, spawn.z));
     this.viewmodel?.setTool(this.run.tool.model);
     this.streamAccumulator = 0;
     this.hunchTimer = 0;
+    this.runTreasureGems = 0;
+  }
+
+  /**
+   * Where a run starts: on the pad, on the far side of the sell point.
+   *
+   * Mirrors the angle `InteractionSystem` uses for the spawn pad, so the two
+   * cannot drift apart.
+   */
+  private spawnPoint(): { x: number; z: number } {
+    const ring = this.currentTier.radius + 7.5;
+    const angle = Math.PI * 1.5;
+    const distance = ring + 5.5;
+    return { x: Math.cos(angle) * distance, z: Math.sin(angle) * distance };
   }
 
   private buildScenery(): void {
@@ -353,6 +382,10 @@ export class Game {
     });
 
     dig.backpackFull.on(() => {
+      // One nag per trip, not one per pull: the player is already being told by
+      // a full red meter, and a stack of identical toasts is just noise.
+      if (this.elapsed - this.lastBagWarning < 6) return;
+      this.lastBagWarning = this.elapsed;
       this.ui.toast('Bag full — take it to the cow', 'bad', '🎒');
       this.audio.play('denied', { volume: 0.5 });
     });
@@ -387,6 +420,7 @@ export class Game {
       this.run.addCash(cash);
       this.meta.recordTreasure(definition.id);
       this.meta.addGems(definition.gems);
+      this.runTreasureGems += definition.gems;
       this.particles?.sparkle(worldPosition, 26, RARITY_COLORS[definition.rarity], 3);
       this.ui.toast(`${definition.name} — ${definition.flavour}`, 'good', '✨');
       this.ui.banner(`${definition.name}!  +$${formatShort(cash)}`, 'gem');
@@ -398,8 +432,31 @@ export class Game {
 
   private bindInput(): void {
     this.input.pointerLockChanged.on((locked) => {
-      if (!locked && this.state === 'playing' && !this.ui.modalOpen) this.setPaused(true);
-      this.player.controlEnabled = locked && this.state === 'playing';
+      // Losing a lock we actually held means the player hit Escape, which is a
+      // pause. Never *acquiring* one - a browser that refuses the request, an
+      // embedded frame, a user who dismissed the prompt - must not lock the
+      // player out of their own game, so movement is gated on game state
+      // rather than on the lock. Only mouse-look needs the lock, and `Input`
+      // already ignores motion without it.
+      if (locked) {
+        this.wasLocked = true;
+        this.lockedAt = performance.now();
+      } else if (this.wasLocked && this.state === 'playing' && !this.ui.modalOpen) {
+        // A lock that evaporates within a few frames of being granted is the
+        // browser refusing, not the player pressing Escape - it happens in
+        // embedded frames and unfocused windows. Pausing on that would strand
+        // the player in a menu they never asked for.
+        const heldFor = performance.now() - this.lockedAt;
+        if (heldFor > 350) this.setPaused(true);
+      }
+      this.syncControl();
+    });
+
+    // Clicking the world re-acquires the lock after the player has tabbed away.
+    this.engine.canvas.addEventListener('mousedown', () => {
+      if (this.state === 'playing' && !this.ui.modalOpen && !this.input.isLocked) {
+        void this.input.requestLock();
+      }
     });
 
     this.input.actionPressed.on((action) => {
@@ -609,12 +666,13 @@ export class Game {
   private finishRun(foundNeedle: boolean): void {
     if (!this.run || !this.pile) return;
     const cleared = this.pile.field.clearedFraction;
-    const treasureGems = 0;
-    const summary: RunSummary = this.meta.finishRun(this.run, foundNeedle, cleared, treasureGems);
+    // Treasure gems were paid the moment each one was picked up, so they are
+    // reported here rather than awarded again.
+    const summary: RunSummary = this.meta.finishRun(this.run, foundNeedle, cleared, this.runTreasureGems);
 
     this.state = 'summary';
     this.input.releaseLock();
-    this.player.controlEnabled = false;
+    this.syncControl();
     this.audio.duck(2.4, 0.35);
     this.ui.showSummary(summary, { canAdvance: summary.unlockedTier !== null || this.tierIndex + 1 < TIERS.length });
     this.save.flush();
@@ -632,6 +690,7 @@ export class Game {
     this.openStack(target, makeRunSeed(target.id, this.meta.stats.runs, Date.now()));
     this.audio.setAmbience(target.mood);
     this.state = 'playing';
+    this.syncControl();
     this.ui.showHud();
     void this.input.requestLock();
     this.save.touch();
@@ -677,16 +736,14 @@ export class Game {
 
   private onModalClosed(): void {
     this.audio.play('ui_close');
-    if (this.state === 'playing') {
-      this.player.controlEnabled = true;
-      void this.input.requestLock();
-    }
+    this.syncControl();
+    if (this.state === 'playing') void this.input.requestLock();
   }
 
   private setPaused(paused: boolean): void {
     if (paused && this.state === 'playing') {
       this.state = 'paused';
-      this.player.controlEnabled = false;
+      this.syncControl();
       this.input.releaseLock();
       this.ui.showPause({
         tier: this.currentTier.name,
@@ -698,6 +755,7 @@ export class Game {
       this.persist();
     } else if (!paused && this.state === 'paused') {
       this.state = 'playing';
+      this.syncControl();
       this.ui.hidePause();
       this.audio.resume();
       void this.input.requestLock();
@@ -736,7 +794,17 @@ export class Game {
     this.player.modifiers.speed = run.stats.moveSpeed;
     this.player.update(dt);
 
-    const digging = this.input.isDown('dig') && this.input.isLocked;
+    // Aim from where the player *is*, not from where the camera was left by the
+    // last frame. Rendering re-poses the camera with interpolation a moment
+    // later; this snap costs two matrix builds and makes the crosshair and the
+    // crater agree exactly, even mid-turn.
+    this.player.applyToCamera(this.engine.camera, 1, this.elapsed, 0);
+    this.engine.camera.updateMatrixWorld(true);
+
+    // Digging is gated on game state, not on pointer lock. Only mouse-look
+    // needs the lock, and `Input` already discards motion without it; a browser
+    // that refuses the lock should still leave a playable game.
+    const digging = this.input.isDown('dig');
     dig.update(dt, this.engine.camera, run.stats, digging);
     this.viewmodel?.setStreaming(dig.streaming);
 
