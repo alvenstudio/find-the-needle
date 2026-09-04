@@ -32,6 +32,7 @@ import {
 import { Meta, type RunSummary } from './gameplay/Meta';
 import { Player } from './gameplay/Player';
 import { Run, makeRunSeed } from './gameplay/Run';
+import type { RunSnapshot } from './core/Save';
 import { Viewmodel } from './gameplay/Viewmodel';
 import { DevConsole, type DevApi, type DevStats, type DevTierInfo, type TeleportTarget } from './ui/DevConsole';
 import { GameUi, type CrosshairState, type HudPanel } from './ui/GameUi';
@@ -213,8 +214,11 @@ export class Game {
 
     const stored = this.meta.storedRun;
     const tierIndex = stored ? Math.max(0, TIERS.findIndex((tier) => tier.id === stored.tierId)) : 0;
-    this.openStack(TIERS[tierIndex], stored?.seed ?? makeRunSeed(TIERS[tierIndex].id, 0, Date.now()));
-    if (stored) this.run?.restore(stored);
+    this.openStack(
+      TIERS[tierIndex],
+      stored?.seed ?? makeRunSeed(TIERS[tierIndex].id, 0, Date.now()),
+      stored,
+    );
 
     this.ui.setLoadingProgress(0.8, 'Будим корову…');
     this.engine.start();
@@ -268,7 +272,7 @@ export class Game {
    * behind a fade, which is the one moment in the game where half a second of
    * work is invisible.
    */
-  private openStack(tier: TierDefinition, seed: number): void {
+  private openStack(tier: TierDefinition, seed: number, restore: RunSnapshot | null = null): void {
     this.disposeStack();
 
     const quality = this.engine.settings;
@@ -293,11 +297,25 @@ export class Game {
     this.releasePileElevator = this.collision.addElevator((x, z) => this.pile?.surfaceHeightAt(x, z) ?? 0);
 
     this.run = new Run(tier, seed, this.meta.perks);
+    // Restoring before the pile and the buried field are set up is what makes
+    // "close the tab mid-stack" actually resume: the crater has to be replayed
+    // into the height field, and the treasures already picked up have to be
+    // excluded before any of them are placed.
+    if (restore) this.run.restore(restore);
+    if (this.run.removedVolume > 0) this.pile.restoreTo(this.run.removedVolume);
+
     this.dig = new DigSystem(this.pile);
     this.dig.density = this.run.density(this.pile.field.originalVolume);
     this.bindRun(this.run, this.dig);
 
-    this.buried = new BuriedField(this.assets, this.pile, tier, seed, this.run.stats.luck, []);
+    this.buried = new BuriedField(
+      this.assets,
+      this.pile,
+      tier,
+      seed,
+      this.run.stats.luck,
+      restore?.claimed ?? [],
+    );
     this.engine.scene.add(this.buried.group);
     this.bindBuried(this.buried);
 

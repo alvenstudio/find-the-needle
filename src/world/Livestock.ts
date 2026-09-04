@@ -405,6 +405,7 @@ export class Livestock {
     if (animal.walking < 0.001) {
       if (animal.walking !== 0) {
         animal.walking = 0;
+        animal.object.rotation.z = 0;
         for (const driven of animal.driven) driven.bone.quaternion.copy(driven.rest);
       }
       return;

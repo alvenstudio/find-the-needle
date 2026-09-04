@@ -304,6 +304,12 @@ function migrate(parsed: Record<string, unknown>): SaveData | null {
 /** Recursively fill missing keys from `fallback` without touching present ones. */
 function deepDefaults<T>(value: T, fallback: T): T {
   if (value === null || value === undefined) return fallback;
+  // A null default has no keys to copy - and `typeof null` is `'object'`, so
+  // without this the walk reached `Object.keys(null)` and threw. The only such
+  // default is `run: null`, which meant that *every* save containing a run in
+  // progress failed to load, was filed away as broken, and the player came
+  // back to a brand new farm.
+  if (fallback === null || fallback === undefined) return value;
   if (typeof fallback !== 'object' || Array.isArray(fallback)) return value;
   const target = value as Record<string, unknown>;
   const source = fallback as Record<string, unknown>;
