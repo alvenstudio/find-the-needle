@@ -4,7 +4,7 @@ import { Assets } from './core/Assets';
 import { Engine, type QualityTier } from './core/Engine';
 import { Input } from './core/Input';
 import { MaterialLibrary } from './core/Materials';
-import { clamp01, formatShort, lerp } from './core/MathX';
+import { clamp01, damp, formatShort, lerp } from './core/MathX';
 import { Rng, hashSeed } from './core/Rng';
 import { SaveManager } from './core/Save';
 import { AudioSystem } from './audio/Audio';
@@ -107,7 +107,20 @@ export class Game {
   private hunchTimer = 0;
   private readonly hunchDirection = new Vector3();
   private detectorTimer = 0;
+  /** Metres of the hunch trail already drawn this activation. */
+  private hunchTrail = 0;
   private lastBagWarning = -99;
+  /** 0..1 blend into the magnifier's narrowed field of view. */
+  private inspectZoom = 0;
+  /**
+   * Which onboarding beat the player is on, or -1 once they are past it.
+   *
+   * Three lines, each fired by the player doing the previous thing, and only
+   * ever on a save that has never finished a run. A game that teaches itself in
+   * thirty seconds does not need a tutorial; it needs three sentences that
+   * arrive exactly when they are useful.
+   */
+  private tutorialStep = -1;
   private elapsed = 0;
   /** True once the browser has actually granted pointer lock at least once. */
   private wasLocked = false;
@@ -206,6 +219,10 @@ export class Game {
     this.state = 'playing';
     this.ui.showHud();
     this.syncControl();
+    if (this.meta.stats.runs === 0 && this.meta.stats.pulls === 0) {
+      this.tutorialStep = 0;
+      this.ui.toast('Walk up to the haystack and hold the left mouse button.', 'info', '🌾');
+    }
     void this.audio.unlock().then(() => {
       this.audio.setAmbience(this.currentTier.mood);
       this.audio.setMusic(this.save.state.settings.musicVolume > 0);
@@ -431,6 +448,12 @@ export class Game {
       if (golden) this.audio.play('coin', { position: event.point, volume: 0.8 });
     });
 
+    dig.dug.on(() => {
+      if (this.tutorialStep !== 0) return;
+      this.tutorialStep = 1;
+      this.ui.toast('Fill your bag, then take it to the cow and press E.', 'info', '🐄');
+    });
+
     dig.backpackFull.on(() => {
       // One nag per trip, not one per pull: the player is already being told by
       // a full red meter, and a stack of identical toasts is just noise.
@@ -518,7 +541,7 @@ export class Game {
         case 'interact':
           this.interactions.activate();
           break;
-        case 'inspect':
+        case 'hunch':
           this.useHunch();
           break;
         case 'shop':
@@ -629,6 +652,12 @@ export class Game {
     }
     const result = this.run.sell();
     this.meta.recordSale(result.straws, result.cash);
+    if (this.tutorialStep === 1) {
+      this.tutorialStep = 2;
+      this.ui.toast('Press B to spend it. Everything resets when you find the needle.', 'info', '🛒');
+    } else if (this.tutorialStep === 2) {
+      this.tutorialStep = -1;
+    }
     this.ui.banner(`Sold ${formatShort(result.straws)} hay for $${formatShort(result.cash)}`, 'good');
     this.audio.play('sell');
     const sellPoint = this.interactions.positionOf('sell');
@@ -650,6 +679,8 @@ export class Game {
     if (!direction) return;
     this.run.useHunch();
     this.hunchTimer = HUNCH.duration;
+    this.hunchTrail = 0;
+    this.ui.toast('A hunch: that way.', 'good', '🔮');
     this.audio.play('detector_ping', { rate: 1.4 });
     this.flash.flash('#8fd8ff', 0.2, 3);
   }
@@ -862,9 +893,38 @@ export class Game {
     this.interactions.update(this.player.position, this.engine.camera);
     this.save.update(dt);
 
-    if (this.hunchTimer > 0) this.hunchTimer = Math.max(0, this.hunchTimer - dt);
+    // The magnifier is a held action: raising it stows the tool, narrows the
+    // lens and lights up anything buried nearby.
+    this.viewmodel?.setInspecting(this.input.isDown('inspect'));
+    this.updateHunch(dt);
     this.updateDetector(dt);
     this.input.endStep();
+  }
+
+  /**
+   * The Hunch arrow.
+   *
+   * A line of motes drifts out from the player along the hinted direction. It
+   * is deliberately a *direction*, not a marker: the arrow tells you which half
+   * of the stack to sweep and nothing more, which is the difference between a
+   * hint and an answer.
+   */
+  private updateHunch(dt: number): void {
+    if (this.hunchTimer <= 0) return;
+    this.hunchTimer = Math.max(0, this.hunchTimer - dt);
+    if (!this.particles) return;
+
+    // Motes march outward and wrap, so the trail always reads as flowing away
+    // from the player rather than sitting there as a static dotted line.
+    this.hunchTrail = (this.hunchTrail + dt * 7) % 1.6;
+    for (let i = 0; i < 9; i++) {
+      const distance = 1.4 + i * 1.6 + this.hunchTrail;
+      this.scratch
+        .copy(this.player.position)
+        .addScaledVector(this.hunchDirection, distance)
+        .setY(this.player.position.y + 1.35 + Math.sin(this.elapsed * 3 + i) * 0.12);
+      this.particles.sparkle(this.scratch, 1, '#9fe0ff', 0.35);
+    }
   }
 
   /**
@@ -877,13 +937,25 @@ export class Game {
    */
   private updateDetector(dt: number): void {
     if (!this.buried || !this.run) return;
-    const range = this.run.stats.treasureSense;
+    // Raising the magnifier roughly doubles the range, which is the whole
+    // reason to raise it.
+    const inspecting = this.input.isDown('inspect');
+    const range = this.run.stats.treasureSense * (inspecting ? 2.1 : 1);
     const distance = this.buried.nearestBuriedTreasure(this.player.position, range, this.scratchB);
     if (!Number.isFinite(distance)) {
       this.detectorTimer = 0;
       return;
     }
+
     const closeness = 1 - clamp01(distance / range);
+    // A glint sits on the surface above the find rather than at its buried
+    // depth, so it marks a place the player can actually dig.
+    this.scratchB.y = Math.max(
+      this.scratchB.y,
+      this.pile?.surfaceHeightAt(this.scratchB.x, this.scratchB.z) ?? this.scratchB.y,
+    );
+    if (inspecting) this.particles?.sparkle(this.scratchB, 1, '#bfe9ff', 0.5);
+
     this.detectorTimer -= dt;
     if (this.detectorTimer <= 0) {
       this.detectorTimer = lerp(1.1, 0.16, closeness);
@@ -898,7 +970,12 @@ export class Game {
 
     this.player.applyToCamera(this.engine.camera, this.engine.alpha, this.elapsed, settings.headBob ? 1 : 0);
     this.screen.update(dt);
-    this.screen.apply(this.engine.camera, this.player.desiredFov(settings.fov));
+    const inspecting = this.state === 'playing' && this.input.isDown('inspect');
+    this.inspectZoom = damp(this.inspectZoom, inspecting ? 1 : 0, 11, dt);
+    this.screen.apply(
+      this.engine.camera,
+      this.player.desiredFov(settings.fov) - this.inspectZoom * 22,
+    );
     this.environment.update(dt, this.engine.camera, this.player.position);
     this.scenery?.update(dt);
     this.livestock?.update(dt);

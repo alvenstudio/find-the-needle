@@ -20,6 +20,7 @@ export type Action =
   | 'dig'
   | 'interact'
   | 'inspect'
+  | 'hunch'
   | 'toolNext'
   | 'toolPrev'
   | 'shop'
@@ -42,7 +43,7 @@ const DEFAULT_BINDINGS: Record<string, Action> = {
   ControlLeft: 'crouch',
   KeyC: 'crouch',
   KeyE: 'interact',
-  KeyF: 'inspect',
+  KeyF: 'hunch',
   KeyQ: 'toolPrev',
   KeyR: 'toolNext',
   KeyB: 'shop',

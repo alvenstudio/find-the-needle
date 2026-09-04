@@ -4,6 +4,7 @@ import {
   Group,
   InstancedMesh,
   Matrix4,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   Quaternion,
   TetrahedronGeometry,
@@ -204,8 +205,18 @@ export class Particles {
   readonly collectTarget = new Vector3();
 
   constructor(assets: Assets, budget: ParticleBudget) {
+    // A dim emissive floor keeps a wisp readable when it tumbles so its lit
+    // face is pointing away: a thin flat-shaded blade with nothing but ambient
+    // on it reads as a black shard against pale hay, which looks like a bug
+    // even though it is technically correct lighting.
     const strawMaterial = stylize(
-      new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 }),
+      new MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.85,
+        metalness: 0,
+        emissive: new Color(0x3b3018),
+        emissiveIntensity: 1,
+      }),
       { rim: 0.22 },
     );
     const strawGeometry = assets.has('hay_wisp') ? assets.geometryOf('hay_wisp') : assets.geometryOf('straw');
@@ -213,16 +224,16 @@ export class Particles {
 
     // A tetrahedron is the cheapest shape that still reads as a glint from any
     // angle, and it needs no billboarding.
-    const sparkMaterial = stylize(
-      new MeshStandardMaterial({
-        vertexColors: true,
-        roughness: 0.4,
-        metalness: 0,
-        emissive: new Color(0xffffff),
-        emissiveIntensity: 2.4,
-      }),
-      { rim: 0, emissiveFromColor: true, cacheKey: 'spark' },
-    );
+    //
+    // Unlit on purpose. A glint is light, not a surface catching light: shading
+    // one means it goes dark whenever its faces happen to point away from the
+    // sun, which is most of the time for something tumbling. Unlit also puts it
+    // straight over the bloom threshold, so sparks bloom and nothing else does.
+    const sparkMaterial = new MeshBasicMaterial({
+      vertexColors: true,
+      toneMapped: false,
+      fog: false,
+    });
     const sparkMesh = new InstancedMesh(new TetrahedronGeometry(0.06, 0), sparkMaterial, budget.spark);
     sparkMesh.setColorAt(0, new Color(0xffffff));
     this.spark = new Pool(sparkMesh, budget.spark);
