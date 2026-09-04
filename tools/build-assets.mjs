@@ -42,9 +42,16 @@ function format(bytes) {
   return `${(bytes / 1024).toFixed(1)} kB`;
 }
 
+/** Quantising twice compounds the error, so an already-quantised file is skipped. */
+async function isQuantised(path) {
+  const bytes = await readFile(path);
+  return bytes.includes(Buffer.from('KHR_mesh_quantization'));
+}
+
 async function optimise(file) {
   const path = join(MODEL_DIR, file);
   const before = (await stat(path)).size;
+  if (await isQuantised(path)) return { file, before, after: before, skipped: true };
   const document = await io.read(path);
 
   await document.transform(
@@ -76,11 +83,15 @@ async function main() {
       const result = await optimise(file);
       totalBefore += result.before;
       totalAfter += result.after;
-      const saved = 1 - result.after / result.before;
-      console.log(
-        `  ${file.padEnd(24)} ${format(result.before).padStart(10)} -> ${format(result.after).padStart(10)}` +
-          `  (${(saved * 100).toFixed(0)}% smaller)`,
-      );
+      if (result.skipped) {
+        console.log(`  ${file.padEnd(24)} ${format(result.before).padStart(10)}  (already quantised)`);
+      } else {
+        const saved = 1 - result.after / result.before;
+        console.log(
+          `  ${file.padEnd(24)} ${format(result.before).padStart(10)} -> ${format(result.after).padStart(10)}` +
+            `  (${(saved * 100).toFixed(0)}% smaller)`,
+        );
+      }
     } catch (error) {
       failures.push({ file, error });
       console.error(`  ${file.padEnd(24)} FAILED: ${error instanceof Error ? error.message : String(error)}`);
@@ -98,17 +109,4 @@ async function main() {
   }
 }
 
-// Guard against optimising an already-optimised library into mush: quantizing
-// twice compounds the error. The marker is cheap and the check is honest.
-async function alreadyOptimised() {
-  const files = (await readdir(MODEL_DIR)).filter((name) => name.endsWith('.glb'));
-  if (files.length === 0) return false;
-  const sample = await readFile(join(MODEL_DIR, files[0]));
-  return sample.includes(Buffer.from('KHR_mesh_quantization'));
-}
-
-if (await alreadyOptimised()) {
-  console.log('  Library is already quantised; re-export from Blender before optimising again.');
-} else {
-  await main();
-}
+await main();

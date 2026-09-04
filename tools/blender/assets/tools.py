@@ -30,7 +30,7 @@ MIN_BAR = 0.022
 
 # Distance between the player's two fists.  Two-handed tools put a wrapped grip
 # here so the forward hand has somewhere to land instead of closing on bare wood.
-HAND_SPAN = 0.34
+HAND_SPAN = 0.208
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,8 @@ def build_hand(side, suffix):
     paint(forearm, shade("barn_red", 0.55),
           faces=select_faces(forearm, lambda c, n: abs(n.z) > 0.7 and abs(c.x - x) < 0.018))
     paint(forearm, shade("barn_red", 0.60),
-          faces=select_faces(forearm, lambda c, n: n.z < -0.7 and abs(c.y - 0.045) > 0.017 and abs(c.y - 0.115) > 0.017))
+          faces=select_faces(forearm, lambda c, n: n.z < -0.7
+                             and abs(c.y - 0.045) > 0.017 and abs(c.y - 0.115) > 0.017))
     parts.append(forearm)
 
     cuff = cube(f"Cuff{suffix}", size=(0.108, 0.040, 0.108), loc=(x, 0.004, -0.010),
@@ -210,7 +211,7 @@ def build_hand(side, suffix):
     bevel(cuff, 0.010, 2)
     parts.append(cuff)
 
-    # Deliberately long in Y: the cuff and the palm each have to swallow a few
+    # Deliberately long in Y: the cuff and the palm each swallow a few
     # millimetres of it, or the bevels open a slit that daylight shows through.
     wrist = cube(f"Wrist{suffix}", size=(0.082, 0.046, 0.082), loc=(x, -0.032, -0.012), color="skin")
     bevel(wrist, 0.012, 2)
@@ -253,26 +254,25 @@ def build_hand(side, suffix):
 
 
 def build_hands():
-    """Exports two files: the mirrored pair, and a single right hand.
+    """Both hands, toed in and tipped up.
 
-    The pair is centred on nothing - both fists sit HAND_SPAN/2 either side of
-    the origin - which is right for a haft the player has both hands on, and
-    useless for the one-handed props (magnifier, hay hook) that are shorter than
-    the gap between the fists.  So ship a single hand as well, recentred on its
-    own palm, and let the game pick.
+    At a 74-degree field of view a pair pointing straight down -Y sits at the
+    very edges of the frame and reads as two disconnected lumps. Angling them
+    puts them where a person's hands actually are when they are about to grab
+    something, and turns the backs of the gloves toward the camera where the
+    knuckle block and the finger gaps can be seen.
     """
-    parts = build_hand(1, "R") + build_hand(-1, "L")
+    parts = []
+    for side, suffix, roll in ((1, "R", -15.0), (-1, "L", 15.0)):
+        hand = join(build_hand(side, suffix), f"Hand{suffix}")
+        place(hand, rot=(math.radians(-14), 0.0, math.radians(roll)))
+        apply_transform(hand)
+        parts.append(hand)
+
     hands = join(parts, "Hands")
     set_origin(hands, (0.0, 0.0, 0.0))
     report(hands)
     export_glb(hands, "hands")
-
-    clear_scene()
-    single = join(build_hand(1, "R"), "Hand")
-    recentre(single, (HAND_SPAN * 0.5, -0.110, -0.014))
-    set_origin(single, (0.0, 0.0, 0.0))
-    report(single)
-    export_glb(single, "hand")
 
 
 # ---------------------------------------------------------------------------
