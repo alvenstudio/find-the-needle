@@ -2,6 +2,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DoubleSide,
   DynamicDrawUsage,
   Group,
   InstancedMesh,
@@ -282,8 +283,15 @@ export class HayPile {
     const normals = new Float32Array(vertexCount * 3);
     const colors = new Float32Array(vertexCount * 3);
 
+    // Quads outside the pile's footprint are skipped entirely. The height field
+    // is a square grid over a round pile, so a fifth of it is flat ground - and
+    // drawn, that flat ground is a pale straw-coloured square lying on the dirt
+    // with a hard straight edge, which is exactly what a haystack does not look
+    // like. Heights only ever fall, so a quad that starts at zero stays at zero
+    // and can never need to come back.
     const quadCount = (resolution - 1) * (resolution - 1);
-    const indices = vertexCount > 65535 ? new Uint32Array(quadCount * 6) : new Uint16Array(quadCount * 6);
+    const scratchIndices = vertexCount > 65535 ? new Uint32Array(quadCount * 6) : new Uint16Array(quadCount * 6);
+    const original = this.field.original;
     let cursor = 0;
     for (let iy = 0; iy < resolution - 1; iy++) {
       for (let ix = 0; ix < resolution - 1; ix++) {
@@ -291,14 +299,16 @@ export class HayPile {
         const b = a + 1;
         const c = a + resolution;
         const d = c + 1;
-        indices[cursor++] = a;
-        indices[cursor++] = c;
-        indices[cursor++] = b;
-        indices[cursor++] = b;
-        indices[cursor++] = c;
-        indices[cursor++] = d;
+        if (original[a] <= 0 && original[b] <= 0 && original[c] <= 0 && original[d] <= 0) continue;
+        scratchIndices[cursor++] = a;
+        scratchIndices[cursor++] = c;
+        scratchIndices[cursor++] = b;
+        scratchIndices[cursor++] = b;
+        scratchIndices[cursor++] = c;
+        scratchIndices[cursor++] = d;
       }
     }
+    const indices = scratchIndices.subarray(0, cursor);
 
     const geometry = new BufferGeometry();
     const positionAttribute = new BufferAttribute(positions, 3);
@@ -601,6 +611,12 @@ function createCoreMaterial(): MeshStandardMaterial {
     vertexColors: true,
     roughness: 0.95,
     metalness: 0,
+    // The pile is an open surface, not a solid, so with back faces culled a
+    // player standing in a crater looks straight through the hay around them
+    // and out at the sky. Drawing both sides closes it: what they see instead
+    // is the underside of the surrounding hay, which three.js lights as the
+    // downward-facing surface it is - dark, like the inside of a haystack.
+    side: DoubleSide,
     // The pile's rim sits at exactly ground level; nudging it toward the camera
     // avoids z-fighting with the dirt patch underneath.
     polygonOffset: true,
