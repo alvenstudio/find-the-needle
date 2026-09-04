@@ -61,7 +61,11 @@
   --c-ink: #3b2a1c;
   --c-ink-soft: #6b5442;
   --c-ink-faint: #8d7360;
-  --c-ink-line: #5a4030;
+  /* The outline every card, chip and button is drawn with. Almost black, but
+     warmed a shade so it sits in a farmyard rather than on a spreadsheet. A
+     thick dark keyline is the single biggest thing separating a sticker-style
+     game UI from a web form. */
+  --c-ink-line: #1d1712;
 
   /* Paper: the card stock. Three steps for card face, inset wells and
      disabled surfaces. */
@@ -177,10 +181,10 @@
      Two components per shadow: a hard offset "board thickness" in warm brown
      and a soft ambient pool. Together they read as painted plywood props
      lying on a table rather than floating glass. */
-  --sh-1: 0 2px 0 rgba(90, 64, 48, 0.28), 0 3px 8px rgba(90, 64, 48, 0.18);
-  --sh-2: 0 4px 0 rgba(90, 64, 48, 0.3), 0 8px 18px rgba(90, 64, 48, 0.22);
-  --sh-3: 0 7px 0 rgba(90, 64, 48, 0.32), 0 16px 34px rgba(90, 64, 48, 0.3);
-  --sh-4: 0 10px 0 rgba(90, 64, 48, 0.34), 0 28px 60px rgba(70, 48, 32, 0.42);
+  --sh-1: 0 3px 0 rgba(0, 0, 0, 0.3), 0 4px 10px rgba(0, 0, 0, 0.22);
+  --sh-2: 0 5px 0 rgba(0, 0, 0, 0.32), 0 10px 22px rgba(0, 0, 0, 0.28);
+  --sh-3: 0 7px 0 rgba(0, 0, 0, 0.34), 0 16px 34px rgba(0, 0, 0, 0.34);
+  --sh-4: 0 10px 0 rgba(0, 0, 0, 0.36), 0 28px 60px rgba(0, 0, 0, 0.45);
   /* The thin white line along the top edge of every card - the single cheap
      trick that sells "this is a physical object catching the sun". */
   --sh-top: inset 0 2px 0 rgba(255, 255, 255, 0.75);
@@ -218,6 +222,18 @@
   --z-pause: 60;
   --z-celebrate: 70;
   --z-loading: 80;
+
+  /* The outline every piece of white HUD text is drawn with. Four offsets and
+     a drop, which is what makes bold white type legible over a bright sky and
+     a dark barn at the same time without a panel behind it. */
+  --stroke: -1px -1px 0 var(--c-border), 1px -1px 0 var(--c-border),
+    -1px 1px 0 var(--c-border), 1px 1px 0 var(--c-border),
+    0 2px 0 rgba(0, 0, 0, 0.45);
+
+  /* Global HUD scale, written by `GameUi.applyLayout` from the viewport
+     height. The HUD is authored at desktop sizes; without this it eats a
+     third of a phone in landscape. Capped at 1 so a big monitor is unchanged. */
+  --ui-scale: 1;
 
   /* Hit target floor. Anything the player taps on a phone respects this. */
   --tap: 44px;
@@ -539,10 +555,11 @@ p {
   padding: var(--s3) var(--s5);
   font: inherit;
   font-size: var(--t-md);
-  font-weight: var(--w-bold);
+  font-weight: var(--w-black);
   color: var(--c-ink);
   text-align: center;
-  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
   white-space: nowrap;
   cursor: pointer;
   background: linear-gradient(180deg, var(--c-paper) 0%, var(--c-paper-2) 100%);
@@ -576,9 +593,13 @@ p {
   line-height: 1;
 }
 
+/* The saturated variants carry white stroked type rather than dark type on a
+   pale fill. It is the loudest thing in the kit and it is meant to be: the
+   button you are supposed to press should read from across the room. */
 .btn--primary {
-  color: var(--c-ink);
-  background: linear-gradient(180deg, var(--c-straw-light) 0%, var(--c-straw) 100%);
+  color: #fff;
+  text-shadow: var(--stroke);
+  background: linear-gradient(180deg, #f0b83c 0%, var(--c-straw-deep) 100%);
   box-shadow: inset 0 calc(var(--lip) * -1) 0 var(--c-straw-dark), var(--sh-2);
 }
 
@@ -587,9 +608,9 @@ p {
 }
 
 .btn--buy {
-  color: #fdfff8;
-  text-shadow: 0 2px 0 rgba(38, 76, 14, 0.45);
-  background: linear-gradient(180deg, var(--c-grass-light) 0%, var(--c-grass) 100%);
+  color: #fff;
+  text-shadow: var(--stroke);
+  background: linear-gradient(180deg, #78cd4b 0%, var(--c-grass-deep) 100%);
   box-shadow: inset 0 calc(var(--lip) * -1) 0 var(--c-grass-dark), var(--sh-2);
 }
 
@@ -598,9 +619,9 @@ p {
 }
 
 .btn--danger {
-  color: #fff6f6;
-  text-shadow: 0 2px 0 rgba(110, 26, 33, 0.45);
-  background: linear-gradient(180deg, var(--c-barn-light) 0%, var(--c-barn) 100%);
+  color: #fff;
+  text-shadow: var(--stroke);
+  background: linear-gradient(180deg, #ec6a73 0%, var(--c-barn-deep) 100%);
   box-shadow: inset 0 calc(var(--lip) * -1) 0 var(--c-barn-dark), var(--sh-2);
 }
 
@@ -613,6 +634,7 @@ p {
    the hit area is discoverable. */
 .btn--ghost {
   color: var(--c-text-muted);
+  text-shadow: none;
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -696,50 +718,50 @@ p {
    bar and inside reward rows, so they must look right on both sky and paper. */
 .chip {
   display: inline-flex;
-  gap: var(--s2);
+  gap: var(--s3);
   align-items: center;
-  min-height: 36px;
-  padding: var(--s2) var(--s4) var(--s2) var(--s3);
-  font-size: var(--t-md);
-  font-weight: var(--w-bold);
-  color: var(--c-ink);
+  min-height: 40px;
+  padding: var(--s2) var(--s5) var(--s2) var(--s2);
+  font-size: var(--t-lg);
+  font-weight: var(--w-black);
+  color: #fff;
+  text-shadow: var(--stroke);
   white-space: nowrap;
-  background: linear-gradient(180deg, var(--c-paper) 0%, var(--c-paper-2) 100%);
+  background: var(--c-ink-soft);
   border: var(--bw) solid var(--c-border);
-  border-radius: var(--r-pill);
-  box-shadow: inset 0 -3px 0 rgba(90, 64, 48, 0.18), var(--sh-1);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-2);
 }
 
+/* The icon is drawn larger than the box it sits in, so it pops out of the
+   chip's outline instead of being politely contained by it. */
 .chip__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.5em;
-  height: 1.5em;
-  font-size: 1.05em;
+  width: 1.25em;
+  height: 1.25em;
+  font-size: 1.5em;
   line-height: 1;
-  background: var(--c-straw-light);
-  border-radius: var(--r-pill);
-  box-shadow: inset 0 0 0 2px rgba(169, 120, 31, 0.35);
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.4));
 }
 
 .chip__value {
   min-width: 2.5ch;
   text-align: right;
+  letter-spacing: 0.01em;
 }
 
-.chip--money .chip__icon {
-  background: var(--c-straw);
+.chip--money {
+  background: #d28a1c;
 }
 
-.chip--gem .chip__icon {
-  background: var(--c-sky-light);
-  box-shadow: inset 0 0 0 2px rgba(47, 124, 173, 0.35);
+.chip--gem {
+  background: #3a93cf;
 }
 
-.chip--hay .chip__icon {
-  background: var(--c-grass-light);
-  box-shadow: inset 0 0 0 2px rgba(59, 118, 28, 0.3);
+.chip--hay {
+  background: #4f9c35;
 }
 
 /* Applied by `chip.flash()`; removed on `animationend` by Widgets.ts. */
@@ -748,10 +770,11 @@ p {
 }
 
 .chip--sm {
-  min-height: 28px;
-  padding: 1px var(--s3) 1px var(--s1);
-  font-size: var(--t-sm);
+  min-height: 30px;
+  padding: 1px var(--s3) 1px var(--s2);
+  font-size: var(--t-md);
   border-width: 2px;
+  box-shadow: var(--sh-1);
 }
 
 /* -------------------------------------------------------------- meters -- */
@@ -1490,16 +1513,23 @@ p {
   max-width: calc(50% - var(--s4));
 }
 
+/* Each corner scales about its own outer corner, so the HUD shrinks toward
+   the edges of a short screen rather than sliding across it. */
 .hud__top-left {
   top: calc(var(--gutter) + env(safe-area-inset-top));
   left: var(--gutter);
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  transform-origin: top left;
+  transform: scale(var(--ui-scale));
 }
 
 .hud__top-right {
   top: calc(var(--gutter) + env(safe-area-inset-top));
   right: var(--gutter);
   justify-content: flex-end;
+  transform-origin: top right;
+  transform: scale(var(--ui-scale));
 }
 
 .hud__bottom-left {
@@ -1508,6 +1538,8 @@ p {
   flex-direction: column;
   align-items: stretch;
   width: min(300px, 45vw);
+  transform-origin: bottom left;
+  transform: scale(var(--ui-scale));
 }
 
 .hud__bottom-right {
@@ -1515,6 +1547,110 @@ p {
   bottom: calc(var(--gutter) + env(safe-area-inset-bottom));
   flex-direction: column;
   align-items: flex-end;
+  transform-origin: bottom right;
+  transform: scale(var(--ui-scale));
+}
+
+/* -------------------------------------------------------- action rail -- */
+
+/* The four things the player opens, as buttons rather than as a list of
+   keyboard shortcuts to memorise. This is the one piece of the HUD that is
+   also the touch interface: on a phone there is no B, J or M key, and a rail
+   the thumb can reach is the difference between the game having a shop and
+   not having one.
+   */
+.hud__rail {
+  position: absolute;
+  top: 50%;
+  right: var(--gutter);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  align-items: stretch;
+  transform-origin: right center;
+  transform: translateY(-50%) scale(var(--ui-scale));
+}
+
+.rail-btn {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  min-height: 52px;
+  padding: var(--s2) var(--s5) var(--s2) var(--s2);
+  font: inherit;
+  font-size: var(--t-md);
+  font-weight: var(--w-black);
+  color: #fff;
+  text-shadow: var(--stroke);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  background: #e0691d;
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-2);
+  transition: transform var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out), filter var(--dur-1) var(--ease-out);
+  pointer-events: auto;
+}
+
+.rail-btn:hover {
+  filter: brightness(1.09);
+}
+
+.rail-btn:active {
+  transform: translateY(3px);
+  box-shadow: var(--sh-1);
+}
+
+.rail-btn:focus-visible {
+  outline: 3px solid var(--c-paper);
+  outline-offset: 2px;
+}
+
+.rail-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  height: 1.6em;
+  font-size: 1.5em;
+  line-height: 1;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.4));
+}
+
+.rail-btn__label {
+  min-width: 6.5em;
+  text-align: center;
+}
+
+.rail-btn--shop { background: #e0691d; }
+.rail-btn--tools { background: #7e48e5; }
+.rail-btn--quests { background: #3a93cf; }
+.rail-btn--travel { background: #46a35a; }
+
+/* A count of claimable jobs, in the corner of its button. */
+.rail-btn__badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  font-size: var(--t-sm);
+  font-weight: var(--w-black);
+  color: #fff;
+  text-shadow: var(--stroke);
+  background: var(--c-barn);
+  border: 2px solid var(--c-border);
+  border-radius: var(--r-pill);
+}
+
+.rail-btn {
+  position: relative;
 }
 
 /* Top-centre: the stack progress bar, the one number that tells the player
@@ -1523,16 +1659,17 @@ p {
   position: absolute;
   top: calc(var(--gutter) + env(safe-area-inset-top));
   left: 50%;
-  width: min(360px, 46vw);
-  transform: translateX(-50%);
+  width: min(320px, 46vw);
+  transform: translateX(-50%) scale(var(--ui-scale));
+  transform-origin: top center;
 }
 
 .hud__panel {
   padding: var(--s3) var(--s4);
-  background: rgba(255, 248, 234, 0.92);
+  background: rgba(255, 248, 234, 0.94);
   border: var(--bw) solid var(--c-border);
   border-radius: var(--r-lg);
-  box-shadow: var(--sh-2), var(--sh-top);
+  box-shadow: var(--sh-2);
   pointer-events: auto;
 }
 
@@ -1540,8 +1677,8 @@ p {
   display: flex;
   gap: var(--s3);
   align-items: center;
-  font-size: var(--t-sm);
-  font-weight: var(--w-bold);
+  font-size: var(--t-md);
+  font-weight: var(--w-black);
 }
 
 .hud__tool-icon {
@@ -2544,11 +2681,28 @@ p {
   }
 
   /* The right corner only ever holds the menu button, so the currency chips
-     get the rest of the strip. Splitting the top 50/50 here would wrap the
-     second chip onto its own line and straight under the stack bar. */
-  .hud__top-left {
+     get the rest of the strip - and they go back to a row here. Stacked, the
+     second chip lands exactly where the full-width stack bar is about to be. */
+  .hud__top-left,
+  .hud__top-left > .u-col {
+    flex-direction: row;
     flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .hud__top-left {
     max-width: calc(100% - 60px);
+  }
+
+  /* The rail is the touch interface, so it keeps its size; only its label
+     tightens up to leave the middle of the screen for the game. */
+  .rail-btn {
+    min-height: 46px;
+    padding-right: var(--s4);
+  }
+
+  .rail-btn__label {
+    min-width: 4.5em;
   }
 
   .hud__top-right {

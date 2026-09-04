@@ -223,12 +223,36 @@ export class Livestock {
    * where the hens are evenly spaced looks staged, and at these counts a few
    * rejected samples cost nothing.
    */
-  scatter(spec: LivestockSpec, innerRadius: number, outerRadius: number): void {
+  scatter(
+    spec: LivestockSpec,
+    innerRadius: number,
+    outerRadius: number,
+    keepClear?: { x: number; z: number; radius: number },
+  ): void {
     if (!this.assets.has(spec.model)) return;
     for (let i = 0; i < spec.count; i++) {
-      const angle = this.rng.range(0, Math.PI * 2);
-      const radius = Math.sqrt(this.rng.range(innerRadius * innerRadius, outerRadius * outerRadius));
-      this.add(spec, Math.cos(angle) * radius, Math.sin(angle) * radius, this.rng.range(0, Math.PI * 2));
+      let x = 0;
+      let z = 0;
+      // A few tries at staying off the spawn pad. Landing a cow where the
+      // player arrives means the first thing they ever see is its flank.
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = this.rng.range(0, Math.PI * 2);
+        const radius = Math.sqrt(this.rng.range(innerRadius * innerRadius, outerRadius * outerRadius));
+        x = Math.cos(angle) * radius;
+        z = Math.sin(angle) * radius;
+        if (!keepClear) break;
+        const dx = x - keepClear.x;
+        const dz = z - keepClear.z;
+        if (dx * dx + dz * dz >= keepClear.radius * keepClear.radius) break;
+      }
+      const placed = this.add(spec, x, z, this.rng.range(0, Math.PI * 2));
+      // Wandering must not undo the placement, so an animal that starts clear
+      // of the pad is not allowed to roam back onto it.
+      if (placed && keepClear) {
+        const animal = this.animals[this.animals.length - 1];
+        const distance = Math.hypot(x - keepClear.x, z - keepClear.z);
+        animal.roam = Math.min(animal.roam, Math.max(0.5, distance - keepClear.radius));
+      }
     }
   }
 

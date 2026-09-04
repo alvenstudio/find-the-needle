@@ -95,10 +95,15 @@ export interface UiCallbacks {
   onReplayStack(): void;
   onSettingChanged<K extends keyof SaveData['settings']>(key: K, value: SaveData['settings'][K]): void;
   onResetSave(): void;
+  /** The HUD's action rail: the same panels the B/J/M keys open. */
+  onOpenPanel(panel: HudPanel): void;
   /** Fired whenever any modal closes, however it was closed. */
   onCloseModal(): void;
   onSound(name: 'ui_hover' | 'ui_click' | 'ui_open' | 'ui_close'): void;
 }
+
+/** The four panels the HUD's action rail can open. */
+export type HudPanel = 'shop' | 'quests' | 'records' | 'travel';
 
 /** The centre-screen "[E] Sell hay" line, or `null` for nothing in reach. */
 export type HudPrompt = { key: string; label: string; blocked?: boolean } | null;
@@ -115,6 +120,20 @@ export type CrosshairState = 'hidden' | 'idle' | 'hot' | 'digging' | 'far';
  * that *is*. They also do the tutorial's job: by the time the first stack is
  * ready the player has read three sentences about how the game works.
  */
+/**
+ * Viewport height the HUD is authored against. Shorter screens scale down
+ * proportionally; taller ones do not scale up.
+ */
+const UI_REFERENCE_HEIGHT = 860;
+
+/** Labels on the action rail, in one place so they read as a set. */
+const RAIL_LABELS = {
+  shop: 'Shop',
+  quests: 'Jobs',
+  records: 'Records',
+  travel: 'Travel',
+} as const;
+
 const LOADING_TIPS: readonly string[] = [
   'Cash and upgrades belong to one haystack. Gems are forever.',
   'A full bag wastes every swing. Watch the green bar.',
@@ -265,14 +284,6 @@ function statLine(label: string, value: string): HTMLElement {
   ]);
 }
 
-/** A `[key] Label` hint, using the same keycap as the interaction prompt. */
-function keyHint(key: string, label: string): HTMLElement {
-  return el('div.u-row', undefined, [
-    el('span.key', { textContent: key }),
-    el('span.u-label', { textContent: label }),
-  ]);
-}
-
 /**
  * Hide a meter's own head row.
  *
@@ -318,7 +329,7 @@ export class GameUi {
   private bagPanel!: HTMLElement;
   private topLeftColumn!: HTMLElement;
   private bottomLeft!: HTMLElement;
-  private hintsPanel!: HTMLElement;
+  private rail!: HTMLElement;
   private stackPanel!: HTMLElement;
   private stackRow!: HTMLElement;
   private readonly stackMeter: MeterHandle;
@@ -489,37 +500,48 @@ export class GameUi {
 
   /* ==================================================================== dom */
 
+  /** One button on the action rail: a big icon, a label, and the panel it opens. */
+  private railButton(panel: HudPanel, icon: string, label: string, modifier: string): HTMLElement {
+    const button = el(`button.rail-btn.rail-btn--${modifier}`, {
+      attrs: { type: 'button', 'aria-label': label },
+    }, [
+      el('span.rail-btn__icon', { textContent: icon, attrs: { 'aria-hidden': 'true' } }),
+      el('span.rail-btn__label', { textContent: label }),
+    ]);
+    button.addEventListener('click', () => {
+      this.cb.onSound('ui_click');
+      this.cb.onOpenPanel(panel);
+    });
+    return button;
+  }
+
   /** The four HUD corners plus the centre furniture, built once. */
   private buildHud(): HTMLElement {
     this.bagPanel = el('div.hud__panel', undefined, this.bagMeter.root);
+    // One column, one place to look: how full the bag is, and what you have.
+    // Splitting the two currencies across opposite corners meant a player
+    // buying a perk had to look bottom-left to see whether they could.
     this.topLeftColumn = el('div.u-col', undefined, [
       this.bagPanel,
-      el('div.u-row', undefined, this.cashChip.root),
+      this.cashChip.root,
+      this.gemChip.root,
     ]);
     const topLeft = el('div.hud__top-left', undefined, this.topLeftColumn);
 
-    this.stackRow = el('div.u-row', undefined, [
-      el('span.u-label', { textContent: 'Stack' }),
-      el('span.u-spacer'),
-    ]);
-    this.stackPanel = el('div.hud__panel', undefined, [
-      this.stackRow,
-      this.stackPct,
-      this.stackName,
-      this.stackMeter.root,
-    ]);
+    this.stackRow = el('div.u-row', undefined, [this.stackPct, el('span.u-spacer'), this.stackName]);
+    this.stackPanel = el('div.hud__panel', undefined, [this.stackRow, this.stackMeter.root]);
     const topCenter = el('div.hud__top-center', undefined, this.stackPanel);
 
     const topRight = el('div.hud__top-right', undefined, this.fpsPanel);
 
-    this.bottomLeft = el('div.hud__bottom-left', undefined, [
-      el('div.u-row', undefined, this.gemChip.root),
-    ]);
+    this.bottomLeft = el('div.hud__bottom-left');
     const bottomLeft = this.bottomLeft;
 
-    this.hintsPanel = el('div.hud__panel', undefined, [
-      el('div.u-row', undefined, [keyHint('Q', 'Cycle'), keyHint('E', 'Use')]),
-      el('div.u-row', undefined, [keyHint('B', 'Shop'), keyHint('J', 'Jobs'), keyHint('M', 'Travel')]),
+    this.rail = el('div.hud__rail', undefined, [
+      this.railButton('shop', '🛒', RAIL_LABELS.shop, 'shop'),
+      this.railButton('quests', '📋', RAIL_LABELS.quests, 'quests'),
+      this.railButton('records', '🏆', RAIL_LABELS.records, 'records'),
+      this.railButton('travel', '🗺️', RAIL_LABELS.travel, 'travel'),
     ]);
 
     const bottomRight = el('div.hud__bottom-right', undefined, [
@@ -527,7 +549,6 @@ export class GameUi {
       el('div.hud__panel', undefined, [
         el('div.hud__tool', undefined, [this.toolIcon, this.toolName, this.toolCount]),
       ]),
-      this.hintsPanel,
     ]);
 
     // The crosshair and prompt are children of `.hud` rather than of their own
@@ -540,6 +561,7 @@ export class GameUi {
       topRight,
       bottomLeft,
       bottomRight,
+      this.rail,
       this.crosshair,
       this.prompt,
     ]);
@@ -1667,26 +1689,17 @@ export class GameUi {
    * the frame path.
    */
   private applyLayout(): void {
+    // One scale for the whole HUD, derived from viewport height so the
+    // interface takes the same share of the screen on a laptop and a phone in
+    // landscape. Capped at 1: a big monitor gets the authored size, never more.
+    const scale = Math.min(1, Math.max(0.62, this.viewHeight / UI_REFERENCE_HEIGHT));
+    document.documentElement.style.setProperty('--ui-scale', scale.toFixed(3));
+
     const narrow = this.viewWidth <= 520;
     if (narrow === this.narrowLayout) return;
     this.narrowLayout = narrow;
     if (narrow) this.bottomLeft.prepend(this.bagPanel);
     else this.topLeftColumn.prepend(this.bagPanel);
-    // The keyboard hints go with it: they are the widest thing in the bottom
-    // corners, they collide with the relocated meter, and a phone has no Q key
-    // to press anyway.
-    this.hintsPanel.hidden = narrow;
-
-    // The stack panel collapses from four stacked lines to two. On a phone the
-    // stylesheet gives it its own full-width row 46px down and starts the
-    // toasts at 110px, so it has about 64px to live in - the tier name and the
-    // percentage move up beside the label rather than below it.
-    if (narrow) {
-      this.stackRow.append(this.stackName, this.stackPct);
-    } else {
-      this.stackPanel.insertBefore(this.stackPct, this.stackMeter.root);
-      this.stackPanel.insertBefore(this.stackName, this.stackMeter.root);
-    }
   }
 
   /**

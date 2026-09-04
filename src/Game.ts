@@ -34,7 +34,7 @@ import { Player } from './gameplay/Player';
 import { Run, makeRunSeed } from './gameplay/Run';
 import { Viewmodel } from './gameplay/Viewmodel';
 import { DevConsole, type DevApi, type DevStats, type DevTierInfo, type TeleportTarget } from './ui/DevConsole';
-import { GameUi, type CrosshairState } from './ui/GameUi';
+import { GameUi, type CrosshairState, type HudPanel } from './ui/GameUi';
 import { CollisionWorld } from './world/Collision';
 import { Environment } from './world/Environment';
 import { HayPile } from './world/HayPile';
@@ -181,6 +181,7 @@ export class Game {
       onReplayStack: () => void this.replayStack(),
       onSettingChanged: (key, value) => this.applySetting(key, value),
       onResetSave: () => this.resetSave(),
+      onOpenPanel: (panel) => this.openPanel(panel),
       onCloseModal: () => this.onModalClosed(),
       onSound: (name) => this.audio.play(name),
     });
@@ -372,8 +373,11 @@ export class Game {
       const outward = Math.hypot(sell.x, sell.z) || 1;
       const alongX = sell.x / outward;
       const alongZ = sell.z / outward;
-      const cowX = sell.x + alongX * 0.9 - alongZ * 2.1;
-      const cowZ = sell.z + alongZ * 0.9 + alongX * 2.1;
+      // The offset goes to the side the player does *not* arrive from: the
+      // spawn pad sits clockwise of the trough, so the cow stands anticlockwise
+      // of it and stays out of the shot on the walk in.
+      const cowX = sell.x + alongX * 0.9 + alongZ * 2.2;
+      const cowZ = sell.z + alongZ * 0.9 - alongX * 2.2;
       const cow = livestock.add(
         { model: 'cow', count: 1, roam: 0, speed: 0 },
         cowX,
@@ -386,10 +390,15 @@ export class Game {
     const palette = SCENE_PALETTES[tier.scene];
     const inner = tier.radius + 4;
     const outer = this.scenery.ringRadius + 9;
+    const spawn = this.spawnPoint();
     for (const entry of palette.animals) {
       const spec = LIVESTOCK[entry.model];
       if (!spec) continue;
-      livestock.scatter({ ...spec, count: entry.count }, inner, outer);
+      livestock.scatter({ ...spec, count: entry.count }, inner, outer, {
+        x: spawn.x,
+        z: spawn.z,
+        radius: 5.5,
+      });
     }
   }
 
@@ -578,13 +587,13 @@ export class Game {
           this.useHunch();
           break;
         case 'shop':
-          this.openModal(() => this.run && this.ui.openShop(this.run));
+          this.openPanel('shop');
           break;
         case 'quests':
-          this.openModal(() => this.ui.openQuests(this.meta));
+          this.openPanel('quests');
           break;
         case 'map':
-          this.openModal(() => this.ui.openTravel(this.meta, this.tierIndex));
+          this.openPanel('travel');
           break;
         case 'pause':
           this.setPaused(true);
@@ -719,6 +728,31 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- economy
+  /**
+   * Open one of the HUD's panels.
+   *
+   * The keyboard shortcuts and the on-screen rail both come through here, so
+   * "the shop" is one call site rather than two that can drift - and the rail
+   * is what gives a phone, which has no B key, a shop at all.
+   */
+  private openPanel(panel: HudPanel): void {
+    if (this.state !== 'playing') return;
+    switch (panel) {
+      case 'shop':
+        this.openModal(() => this.run && this.ui.openShop(this.run));
+        break;
+      case 'records':
+        this.openModal(() => this.ui.openRecords(this.meta));
+        break;
+      case 'quests':
+        this.openModal(() => this.ui.openQuests(this.meta));
+        break;
+      case 'travel':
+        this.openModal(() => this.ui.openTravel(this.meta, this.tierIndex));
+        break;
+    }
+  }
+
   private buyUpgrade(id: UpgradeId, max: boolean): void {
     if (!this.run) return;
     const bought = max ? this.run.buyUpgradeMax(id) > 0 : this.run.buyUpgrade(id).ok;
