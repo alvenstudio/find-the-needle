@@ -200,6 +200,14 @@ export class Scenery {
 
   private readonly layers: ScatterLayer[] = [];
   private fenceMesh: InstancedMesh | null = null;
+  /**
+   * Footprints the scatter must leave alone.
+   *
+   * Grass is placed by rejection sampling, and without this the tufts grow
+   * happily through the barn floor and out of the shed roof. Only props with a
+   * real footprint get one; a tuft inside a crate is nobody's problem.
+   */
+  private readonly clearings: { x: number; z: number; radius: number }[] = [];
   private readonly props: Object3D[] = [];
   private readonly matrix = new Matrix4();
   private readonly quaternion = new Quaternion();
@@ -257,7 +265,7 @@ export class Scenery {
     z: number,
     yaw: number,
     scale = 1,
-    solid: 'box' | 'cylinder' | 'none' = 'box',
+    solid: SolidKind = 'box',
   ): Object3D | null {
     if (!this.assets.has(model)) return null;
     const loaded = this.assets.model(model);
@@ -276,13 +284,59 @@ export class Scenery {
       const halfX = Math.max(0.12, (size.x * scale) / 2 - 0.08);
       const halfZ = Math.max(0.12, (size.z * scale) / 2 - 0.08);
       const top = y + size.y * scale * 0.98;
+      if (Math.max(halfX, halfZ) > 1.2) {
+        this.clearings.push({ x, z, radius: Math.hypot(halfX, halfZ) * 0.94 });
+      }
       if (solid === 'cylinder') {
         this.collision.addCylinder(x, z, Math.max(halfX, halfZ), y, top);
+      } else if (solid === 'shell') {
+        this.addShellColliders(model, x, y, z, yaw, halfX, halfZ, top);
       } else {
         this.collision.addBox(new Vector3(x, y, z), halfX, halfZ, y, top, yaw);
       }
     }
     return object;
+  }
+
+  /**
+   * Collide a building as four walls with a doorway, not as a solid block.
+   *
+   * The barn is modelled with a real 3 x 3.4 m opening in its front wall, and
+   * a bounding box across the whole footprint is the only reason a player
+   * cannot walk through it. Five slabs cost five colliders instead of one and
+   * turn the biggest building on the farm from scenery into a place.
+   */
+  private addShellColliders(
+    model: string,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    halfX: number,
+    halfZ: number,
+    top: number,
+  ): void {
+    const doorWidth = DOOR_WIDTHS[model] ?? 3;
+    const t = WALL_HALF_THICKNESS;
+    const sin = Math.sin(yaw);
+    const cos = Math.cos(yaw);
+    // Local (x, z) -> world, matching three.js's rotation about Y.
+    const toWorld = (lx: number, lz: number): Vector3 =>
+      this.position.set(x + lx * cos + lz * sin, y, z - lx * sin + lz * cos);
+
+    // Back wall and the two sides are unbroken; the door is in local +z, which
+    // is the face the model is authored to open through and the one `place`
+    // turns toward the yard.
+    this.collision.addBox(toWorld(0, -(halfZ - t)), halfX, t, y, top, yaw);
+    this.collision.addBox(toWorld(-(halfX - t), 0), t, halfZ, y, top, yaw);
+    this.collision.addBox(toWorld(halfX - t, 0), t, halfZ, y, top, yaw);
+
+    const jamb = Math.max(0, halfX - doorWidth / 2) / 2;
+    if (jamb > 0.05) {
+      const offset = doorWidth / 2 + jamb;
+      this.collision.addBox(toWorld(-offset, halfZ - t), jamb, t, y, top, yaw);
+      this.collision.addBox(toWorld(offset, halfZ - t), jamb, t, y, top, yaw);
+    }
   }
 
   private placeBuildings(palette: ScenePalette, rng: Rng): void {
@@ -297,8 +351,14 @@ export class Scenery {
       const distance = radius + rng.range(-1.5, 3.5);
       const x = Math.cos(angle) * distance;
       const z = Math.sin(angle) * distance;
-      const placed = this.place(model, x, z, Math.atan2(-x, -z) + rng.signed(0.22), 1, 'box');
-      if (placed) this.terrain.addDirtPatch(x, z, 3.2);
+      // A building you can walk into has to face the yard squarely, or the
+      // doorway ends up pointing at the fence.
+      const solid: SolidKind = model in DOOR_WIDTHS ? 'shell' : OPEN_SIDED.has(model) ? 'none' : 'box';
+      const jitter = solid === 'shell' ? 0 : rng.signed(0.22);
+      const yaw = Math.atan2(-x, -z) + jitter;
+      const placed = this.place(model, x, z, yaw, 1, solid);
+      if (placed) this.terrain.addDirtPatch(x, z, solid === 'shell' ? 5.5 : 3.2);
+      if (placed && solid === 'shell') this.dressInterior(model, x, z, yaw, rng);
 
       if (model === 'windmill' && this.assets.has('windmill_blades')) {
         const blades = this.assets.instantiate('windmill_blades');
@@ -309,6 +369,35 @@ export class Scenery {
         this.group.add(blades);
         this.spinners.push(blades);
       }
+    });
+  }
+
+  /**
+   * Put something in the building worth walking in for.
+   *
+   * Bales and crates against the back wall, clear of the doorway and clear of
+   * each other. An empty shed is a disappointment the first time and invisible
+   * every time after.
+   */
+  private dressInterior(model: string, x: number, z: number, yaw: number, rng: Rng): void {
+    const size = this.assets.model(model).size;
+    const sin = Math.sin(yaw);
+    const cos = Math.cos(yaw);
+    const halfX = size.x / 2 - 1.2;
+    const back = -(size.z / 2 - 1.4);
+
+    INTERIOR_PROPS.forEach((prop, index) => {
+      if (!this.assets.has(prop)) return;
+      const lx = (index / Math.max(INTERIOR_PROPS.length - 1, 1) - 0.5) * 2 * halfX + rng.signed(0.4);
+      const lz = back + rng.range(0, 1.6);
+      this.place(
+        prop,
+        x + lx * cos + lz * sin,
+        z - lx * sin + lz * cos,
+        yaw + rng.signed(0.5),
+        rng.range(0.92, 1.08),
+        'box',
+      );
     });
   }
 
@@ -420,6 +509,7 @@ export class Scenery {
         const radius = clearRadius + t * (scatterRadius - clearRadius);
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
+        if (this.isCleared(x, z)) continue;
 
         this.position.set(x, this.terrain.heightAt(x, z) - 0.02, z);
         const uniform = rng.range(spec.scale[0], spec.scale[1]);
@@ -454,6 +544,15 @@ export class Scenery {
     }
   }
 
+  private isCleared(x: number, z: number): boolean {
+    for (const clearing of this.clearings) {
+      const dx = x - clearing.x;
+      const dz = z - clearing.z;
+      if (dx * dx + dz * dz < clearing.radius * clearing.radius) return true;
+    }
+    return false;
+  }
+
   /** Animate the few props that move on their own. */
   update(dt: number): void {
     for (const spinner of this.spinners) {
@@ -474,13 +573,41 @@ export class Scenery {
     this.layers.length = 0;
     this.fenceMesh?.dispose();
     this.fenceMesh = null;
+    this.clearings.length = 0;
     this.props.length = 0;
     this.spinners.length = 0;
     this.group.clear();
   }
 }
 
+/** How a prop blocks the player. */
+type SolidKind = 'box' | 'cylinder' | 'shell' | 'none';
+
+/**
+ * Buildings modelled with a real doorway, and how wide it is.
+ *
+ * These get wall colliders instead of a bounding box, so the opening the model
+ * already has is an opening in the collision too.
+ */
+const DOOR_WIDTHS: Readonly<Record<string, number>> = {
+  barn: 3,
+};
+
+/**
+ * Buildings that are open on most sides and carry no collision at all.
+ *
+ * A pole barn is a roof on six posts; boxing it makes the shelter you are
+ * meant to walk under into a solid block, and colliding the posts individually
+ * buys nothing but a snag.
+ */
+const OPEN_SIDED: ReadonlySet<string> = new Set(['hay_barn']);
+
 /** Authored length of one fence span, as a fallback if the model is missing. */
 const FENCE_SPAN = 2.4;
+/** Half the thickness of a building's wall collider, in metres. */
+const WALL_HALF_THICKNESS = 0.2;
+
+/** What stands inside a building the player can walk into. */
+const INTERIOR_PROPS: readonly string[] = ['bale_square', 'bale_round', 'crate', 'barrel'];
 
 const UP = new Vector3(0, 1, 0);

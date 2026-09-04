@@ -244,14 +244,30 @@ function pushOutOfCylinder(position: Vector3, radius: number, collider: Cylinder
   return true;
 }
 
+/**
+ * World offset -> the box's own frame.
+ *
+ * `yaw` means the same thing here as `Object3D.rotation.y`, which turns local
+ * +Z toward `(sin yaw, cos yaw)`. Getting this backwards mirrors every collider
+ * about its own centre - invisible on a square crate, and the reason a barn's
+ * side wall used to push the player *into* the barn rather than away from it.
+ */
+function toBoxLocal(rx: number, rz: number, yaw: number, out: { x: number; z: number }): void {
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  out.x = rx * cos - rz * sin;
+  out.z = rx * sin + rz * cos;
+}
+
+const localPoint = { x: 0, z: 0 };
+
 function pushOutOfBox(position: Vector3, radius: number, collider: BoxCollider): boolean {
   // Work in the box's local frame so a rotated fence still collides correctly.
-  const cos = Math.cos(-collider.yaw);
-  const sin = Math.sin(-collider.yaw);
   const rx = position.x - collider.centreX;
   const rz = position.z - collider.centreZ;
-  const localX = rx * cos - rz * sin;
-  const localZ = rx * sin + rz * cos;
+  toBoxLocal(rx, rz, collider.yaw, localPoint);
+  const localX = localPoint.x;
+  const localZ = localPoint.z;
 
   const overlapX = collider.halfX + radius - Math.abs(localX);
   const overlapZ = collider.halfZ + radius - Math.abs(localZ);
@@ -263,19 +279,17 @@ function pushOutOfBox(position: Vector3, radius: number, collider: BoxCollider):
   if (overlapX < overlapZ) outX += Math.sign(localX || 1) * overlapX;
   else outZ += Math.sign(localZ || 1) * overlapZ;
 
-  const backCos = Math.cos(collider.yaw);
-  const backSin = Math.sin(collider.yaw);
-  position.x = collider.centreX + (outX * backCos - outZ * backSin);
-  position.z = collider.centreZ + (outX * backSin + outZ * backCos);
+  const cos = Math.cos(collider.yaw);
+  const sin = Math.sin(collider.yaw);
+  position.x = collider.centreX + outX * cos + outZ * sin;
+  position.z = collider.centreZ - outX * sin + outZ * cos;
   return true;
 }
 
 function insideBox(x: number, z: number, radius: number, collider: BoxCollider): boolean {
-  const cos = Math.cos(-collider.yaw);
-  const sin = Math.sin(-collider.yaw);
-  const rx = x - collider.centreX;
-  const rz = z - collider.centreZ;
-  const localX = Math.abs(rx * cos - rz * sin);
-  const localZ = Math.abs(rx * sin + rz * cos);
-  return localX <= collider.halfX + radius && localZ <= collider.halfZ + radius;
+  toBoxLocal(x - collider.centreX, z - collider.centreZ, collider.yaw, localPoint);
+  return (
+    Math.abs(localPoint.x) <= collider.halfX + radius &&
+    Math.abs(localPoint.z) <= collider.halfZ + radius
+  );
 }
