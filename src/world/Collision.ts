@@ -52,6 +52,17 @@ export class CollisionWorld {
   /** Height of walkable ground, before any hay is taken into account. */
   groundHeight: GroundSampler = () => 0;
 
+  /**
+   * Hard outer wall, in metres from the origin. `Infinity` means no wall.
+   *
+   * The boundary fence is drawn as instanced geometry, so it has no colliders
+   * of its own; this one radius is what actually keeps the player in the yard.
+   * A single analytic test is also strictly better than a ring of eighty boxes:
+   * it cannot develop a gap, it costs nothing, and it stops the "squeeze
+   * between two posts" bug from being possible in the first place.
+   */
+  boundaryRadius = Infinity;
+
   private readonly colliders: Collider[] = [];
   private readonly buckets = new Map<number, number[]>();
   private readonly bounds = new Box3();
@@ -142,6 +153,17 @@ export class CollisionWorld {
     let touched = false;
     const feet = position.y;
     const head = position.y + height;
+
+    if (this.boundaryRadius !== Infinity) {
+      const limit = this.boundaryRadius - radius;
+      const distance = Math.hypot(position.x, position.z);
+      if (distance > limit && distance > 1e-4) {
+        const scale = limit / distance;
+        position.x *= scale;
+        position.z *= scale;
+        touched = true;
+      }
+    }
 
     for (let pass = 0; pass < 3; pass++) {
       let movedThisPass = false;

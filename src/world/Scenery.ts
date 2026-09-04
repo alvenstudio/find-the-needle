@@ -40,8 +40,6 @@ export interface ScenePalette {
   clutter: string[];
   /** Livestock that wanders the yard. */
   animals: { model: string; count: number }[];
-  /** How many fence spans ring the working area. 0 disables the fence. */
-  fenceSpans: number;
   treeLine: { model: string; count: number }[];
 }
 
@@ -60,7 +58,6 @@ export const SCENE_PALETTES: Readonly<Record<SceneKind, ScenePalette>> = {
       { model: 'chicken', count: 5 },
       { model: 'cat', count: 1 },
     ],
-    fenceSpans: 18,
     treeLine: [
       { model: 'tree_oak', count: 9 },
       { model: 'tree_pine', count: 7 },
@@ -78,7 +75,6 @@ export const SCENE_PALETTES: Readonly<Record<SceneKind, ScenePalette>> = {
       { model: 'chicken', count: 6 },
       { model: 'cat', count: 2 },
     ],
-    fenceSpans: 14,
     treeLine: [
       { model: 'tree_pine', count: 12 },
       { model: 'bush', count: 10 },
@@ -96,7 +92,6 @@ export const SCENE_PALETTES: Readonly<Record<SceneKind, ScenePalette>> = {
       { model: 'cow', count: 3 },
       { model: 'crow', count: 4 },
     ],
-    fenceSpans: 22,
     treeLine: [
       { model: 'tree_oak', count: 12 },
       { model: 'tree_stump', count: 4 },
@@ -112,7 +107,6 @@ export const SCENE_PALETTES: Readonly<Record<SceneKind, ScenePalette>> = {
     ],
     clutter: ['barrel', 'barrel', 'crate', 'milk_can', 'wheelbarrow', 'bale_square', 'log'],
     animals: [{ model: 'crow', count: 6 }],
-    fenceSpans: 16,
     treeLine: [
       { model: 'tree_pine', count: 16 },
       { model: 'tree_stump', count: 6 },
@@ -132,7 +126,6 @@ export const SCENE_PALETTES: Readonly<Record<SceneKind, ScenePalette>> = {
       { model: 'cat', count: 2 },
       { model: 'crow', count: 5 },
     ],
-    fenceSpans: 24,
     treeLine: [
       { model: 'tree_pine', count: 14 },
       { model: 'tree_oak', count: 10 },
@@ -148,7 +141,6 @@ export const SCENE_PALETTES: Readonly<Record<SceneKind, ScenePalette>> = {
     ],
     clutter: ['bale_round', 'bale_square', 'hay_cart', 'barrel', 'crate', 'chest', 'scarecrow'],
     animals: [{ model: 'crow', count: 8 }],
-    fenceSpans: 0,
     treeLine: [
       { model: 'tree_stump', count: 10 },
       { model: 'tree_pine', count: 8 },
@@ -197,6 +189,8 @@ export interface SceneryOptions {
   pileRadius: number;
   /** Metres beyond the pile where the working ring sits. */
   ringMargin: number;
+  /** Metres beyond the working ring where the boundary fence stands. */
+  boundaryMargin: number;
   /** Distance at which scattered props stop being placed at all. */
   scatterRadius: number;
 }
@@ -205,6 +199,7 @@ export class Scenery {
   readonly group = new Group();
 
   private readonly layers: ScatterLayer[] = [];
+  private fenceMesh: InstancedMesh | null = null;
   private readonly props: Object3D[] = [];
   private readonly matrix = new Matrix4();
   private readonly quaternion = new Quaternion();
@@ -227,7 +222,7 @@ export class Scenery {
 
     this.placeBuildings(palette, rng.fork(1));
     this.placeTreeLine(palette, rng.fork(2));
-    this.placeFence(palette, rng.fork(3));
+    this.placeFence(rng.fork(3));
     this.placeClutter(palette, rng.fork(4));
     this.scatter(palette, rng.fork(5));
   }
@@ -235,6 +230,17 @@ export class Scenery {
   /** Radius of the ring where kiosks and the sell point live. */
   get ringRadius(): number {
     return this.options.pileRadius + this.options.ringMargin;
+  }
+
+  /**
+   * Radius of the boundary fence - the edge of the world.
+   *
+   * Everything the player can walk to is inside this: the stack, the kiosks,
+   * the barn and the yard clutter. `CollisionWorld.boundaryRadius` is set from
+   * it, which is what actually stops them leaving.
+   */
+  get boundaryRadius(): number {
+    return this.ringRadius + this.options.boundaryMargin;
   }
 
   // ---------------------------------------------------------------- placing
@@ -280,13 +286,15 @@ export class Scenery {
   }
 
   private placeBuildings(palette: ScenePalette, rng: Rng): void {
-    const radius = this.ringRadius + 13;
+    // Inside the fence, and close enough that walking to the barn is a
+    // ten-second detour rather than a hike across an empty field.
+    const radius = this.ringRadius + 8.5;
     const count = palette.buildings.length;
     palette.buildings.forEach((model, index) => {
       // Spread the buildings around the back half of the ring, leaving the
       // front open so the player always faces the stack across clear ground.
       const angle = Math.PI * 0.28 + (index / Math.max(count - 1, 1)) * Math.PI * 1.44 + rng.signed(0.1);
-      const distance = radius + rng.range(-2.5, 7);
+      const distance = radius + rng.range(-1.5, 3.5);
       const x = Math.cos(angle) * distance;
       const z = Math.sin(angle) * distance;
       const placed = this.place(model, x, z, Math.atan2(-x, -z) + rng.signed(0.22), 1, 'box');
@@ -304,33 +312,69 @@ export class Scenery {
     });
   }
 
+  /**
+   * Trees, on the slope outside the fence.
+   *
+   * They get no colliders: the player cannot reach them, and a hundred
+   * cylinders in the broadphase for scenery nobody can touch is pure cost.
+   */
   private placeTreeLine(palette: ScenePalette, rng: Rng): void {
-    const inner = this.ringRadius + 22;
-    const outer = Math.min(this.options.scatterRadius, inner + 55);
+    const inner = this.boundaryRadius + 2.5;
+    const outer = Math.min(this.options.scatterRadius, inner + 26);
     for (const entry of palette.treeLine) {
       for (let i = 0; i < entry.count; i++) {
         const point = this.terrain.samplePoint(rng, inner, outer, this.position);
-        this.place(entry.model, point.x, point.z, rng.range(0, Math.PI * 2), rng.range(0.8, 1.35), 'cylinder');
+        this.place(entry.model, point.x, point.z, rng.range(0, Math.PI * 2), rng.range(0.85, 1.4), 'none');
       }
     }
   }
 
-  private placeFence(palette: ScenePalette, rng: Rng): void {
-    if (palette.fenceSpans <= 0 || !this.assets.has('fence_section')) return;
-    const radius = this.ringRadius + 6.5;
-    const spans = palette.fenceSpans;
-    // Leave a gap where the player walks in from the spawn pad.
-    const gapStart = Math.PI * 1.42;
-    const gapWidth = Math.PI * 0.34;
+  /**
+   * The boundary fence: one closed ring of post-and-rail around the yard.
+   *
+   * Drawn as a single `InstancedMesh` because the ring is eighty-odd spans and
+   * eighty draw calls for a fence is not a trade worth making. It carries no
+   * colliders either - `CollisionWorld.boundaryRadius` is the wall, and one
+   * analytic circle cannot develop the gap that a ring of boxes eventually
+   * will.
+   */
+  private placeFence(rng: Rng): void {
+    if (!this.assets.has('fence_section')) return;
+    const radius = this.boundaryRadius;
+    // Sections are authored 2.4 m long and chain end post to end post, so the
+    // count is the circumference over the span, rounded up so they overlap
+    // very slightly rather than leaving a slot.
+    const span = this.assets.model('fence_section').size.x || FENCE_SPAN;
+    const count = Math.max(12, Math.ceil((Math.PI * 2 * radius) / span));
 
-    for (let i = 0; i < spans; i++) {
-      const angle = (i / spans) * Math.PI * 2;
-      if (angle > gapStart && angle < gapStart + gapWidth) continue;
+    const mesh = new InstancedMesh(
+      this.assets.geometryOf('fence_section'),
+      this.assets.materialOf('fence_section'),
+      count,
+    );
+    mesh.instanceMatrix.setUsage(StaticDrawUsage);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
-      // Fence sections run along their local X, so the yaw is the tangent.
-      this.place('fence_section', x, z, angle + Math.PI / 2 + rng.signed(0.02), 1, 'box');
+      this.position.set(x, this.terrain.heightAt(x, z), z);
+      // Sections run along their local X, so the yaw is the ring's tangent.
+      this.quaternion.setFromAxisAngle(UP, -angle + Math.PI / 2 + rng.signed(0.012));
+      // Chord length is a hair under the arc, so widen each span to close the
+      // joint instead of leaving a sliver of daylight at every post.
+      this.scale.set(1.02, 1, 1);
+      this.matrix.compose(this.position, this.quaternion, this.scale);
+      mesh.setMatrixAt(i, this.matrix);
     }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    this.fenceMesh = mesh;
+    this.group.add(mesh);
   }
 
   private placeClutter(palette: ScenePalette, rng: Rng): void {
@@ -350,8 +394,12 @@ export class Scenery {
    * paying for tufts nobody will ever stand next to.
    */
   private scatter(palette: ScenePalette, rng: Rng): void {
-    const { pileRadius, scatterRadius } = this.options;
+    const { pileRadius } = this.options;
     const clearRadius = pileRadius + 1.5;
+    // Vegetation stops a little way past the fence. Beyond that it is on a
+    // hillside the player will never stand on, where one tuft in a thousand
+    // covers a pixel.
+    const scatterRadius = Math.min(this.options.scatterRadius, this.boundaryRadius + 22);
 
     for (const spec of palette.scatter) {
       if (!this.assets.has(spec.model)) continue;
@@ -424,10 +472,15 @@ export class Scenery {
   dispose(): void {
     for (const layer of this.layers) layer.dispose();
     this.layers.length = 0;
+    this.fenceMesh?.dispose();
+    this.fenceMesh = null;
     this.props.length = 0;
     this.spinners.length = 0;
     this.group.clear();
   }
 }
+
+/** Authored length of one fence span, as a fallback if the model is missing. */
+const FENCE_SPAN = 2.4;
 
 const UP = new Vector3(0, 1, 0);

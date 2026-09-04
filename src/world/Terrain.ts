@@ -7,29 +7,40 @@ import { Rng } from '../core/Rng';
 /**
  * The ground the farm sits on.
  *
- * A single radial mesh: dense and dead flat where the player actually works,
- * then rolling and progressively coarser as it runs out to the horizon. The
- * flat working area matters more than it sounds - the haystack is a height
+ * A single radial mesh in three bands: dead flat where the player works, then
+ * a **rampart** - a ring of hills that rises out of the flat edge and closes
+ * the horizon in every direction - and then a short tail of rolling ground
+ * behind it so the ridge has something to sit on.
+ *
+ * The rampart is the whole design. An open plain running to a distant horizon
+ * has to be *big*, and a big plain is expensive twice over: in the mesh, and in
+ * the scenery it has to be dressed with to not look empty. A bowl the player
+ * cannot see out of is a hundred metres across instead of six hundred, closes
+ * the world without a visible wall, and gives the fence a reason to be there.
+ *
+ * The flat working area matters more than it sounds: the haystack is a height
  * field anchored at y = 0, and a lumpy floor underneath it would make craters
  * bottom out at different depths depending on where you stood.
  *
  * Radial topology also means the mesh gets cheaper exactly where detail stops
- * mattering, and the outer ring can be pushed 300 m out for a horizon without
- * costing a single extra vertex in the play space.
+ * mattering, and the rim can be pushed out for a horizon without costing a
+ * single extra vertex in the play space.
  */
 
 export interface TerrainOptions {
   seed: number;
-  /** Everything inside this radius is perfectly flat. */
+  /** Everything inside this radius is perfectly flat. This is the play area. */
   flatRadius: number;
   /** Where the mesh ends. */
   outerRadius: number;
+  /** Metres of slope between the flat edge and the top of the rampart. */
+  rampWidth: number;
+  /** Height of the ring of hills that closes the horizon. */
+  rampHeight: number;
   /** Rings of vertices from centre to edge. */
   rings: number;
   /** Vertices around each ring. */
   segments: number;
-  /** Peak hill height out at the rim. */
-  hillHeight: number;
   grass: string;
   grassDark: string;
   dirt: string;
@@ -39,23 +50,35 @@ export interface TerrainOptions {
 
 export const DEFAULT_TERRAIN: TerrainOptions = {
   seed: 1,
-  flatRadius: 34,
-  outerRadius: 320,
-  rings: 46,
-  segments: 96,
-  hillHeight: 16,
+  // Sized so the largest stack's boundary fence still stands on flat ground.
+  flatRadius: 38,
+  outerRadius: 116,
+  rampWidth: 34,
+  rampHeight: 21,
+  rings: 30,
+  segments: 80,
   grass: '#6fbf3f',
   grassDark: '#4e9a2e',
   dirt: '#9a6a3c',
   dirtRadius: 9,
 };
 
+/** One lump on the rampart, so the ridge is not a lathe-turned cone. */
+interface Knoll {
+  x: number;
+  z: number;
+  radius: number;
+  height: number;
+}
+
 export class Terrain {
   readonly mesh: Mesh;
   readonly options: TerrainOptions;
 
   private readonly geometry: BufferGeometry;
-  private readonly hills: { x: number; z: number; radius: number; height: number }[] = [];
+  private readonly knolls: Knoll[] = [];
+  /** Angular harmonics that give the ridge line its wander. */
+  private readonly waves: { frequency: number; amplitude: number; phase: number }[] = [];
   /** Extra bare-dirt discs stamped into the ground colour. */
   private readonly patches: { x: number; z: number; radius: number }[] = [];
 
@@ -63,17 +86,29 @@ export class Terrain {
     this.options = { ...DEFAULT_TERRAIN, ...options };
     const rng = new Rng(this.options.seed);
 
-    // Hills are explicit bumps rather than noise so `heightAt` is an exact,
-    // cheap analytic function instead of a texture lookup.
-    const hillCount = 22;
-    for (let i = 0; i < hillCount; i++) {
-      const angle = rng.range(0, Math.PI * 2);
-      const distance = rng.range(this.options.flatRadius + 18, this.options.outerRadius * 0.72);
-      this.hills.push({
+    // Three harmonics: one that gives the ring two or three broad shoulders,
+    // and two finer ones for the silhouette. Analytic, so `heightAt` stays an
+    // exact closed form the collider and the mesh both agree on.
+    for (const frequency of [3, 5, 8]) {
+      this.waves.push({
+        frequency,
+        amplitude: rng.range(0.1, 0.26) * (frequency === 3 ? 1.4 : 1),
+        phase: rng.range(0, Math.PI * 2),
+      });
+    }
+
+    // A few peaks sitting on the ridge, out where the player can only look at
+    // them. They are what stops the rampart reading as a wall.
+    const knollCount = 14;
+    const ridge = this.options.flatRadius + this.options.rampWidth;
+    for (let i = 0; i < knollCount; i++) {
+      const angle = (i / knollCount) * Math.PI * 2 + rng.signed(0.18);
+      const distance = rng.range(ridge - 6, Math.min(this.options.outerRadius - 12, ridge + 34));
+      this.knolls.push({
         x: Math.cos(angle) * distance,
         z: Math.sin(angle) * distance,
-        radius: rng.range(28, 78),
-        height: rng.range(0.35, 1) * this.options.hillHeight,
+        radius: rng.range(16, 34),
+        height: rng.range(2.5, 9),
       });
     }
 
@@ -89,31 +124,47 @@ export class Terrain {
     this.mesh.updateMatrix();
   }
 
+  /** The radius inside which the ground is flat - the whole playable yard. */
+  get playRadius(): number {
+    return this.options.flatRadius;
+  }
+
   /**
    * Surface height at a world column.
    *
-   * Matches the mesh exactly because both evaluate the same closed form, which
+   * Matches the mesh exactly because both evaluate this same closed form, which
    * is why the player never floats above or sinks into a hillside.
    */
   heightAt(x: number, z: number): number {
+    const { flatRadius, rampWidth, rampHeight } = this.options;
     const distance = Math.hypot(x, z);
-    if (distance <= this.options.flatRadius) return 0;
+    if (distance <= flatRadius) return 0;
 
-    // Ease out of the flat zone so there is no crease at its edge.
-    const blend = smoothstep((distance - this.options.flatRadius) / 22);
-    let height = 0;
-    for (const hill of this.hills) {
-      const d = Math.hypot(x - hill.x, z - hill.z) / hill.radius;
+    // The ramp eases out of the flat zone, so there is no crease at its edge,
+    // and holds its full height past the ridge so the horizon stays closed.
+    const ramp = smoothstep((distance - flatRadius) / rampWidth);
+    let angular = 1;
+    const angle = Math.atan2(z, x);
+    for (const wave of this.waves) angular += Math.sin(angle * wave.frequency + wave.phase) * wave.amplitude;
+
+    let height = rampHeight * ramp * Math.max(0.35, angular);
+    for (const knoll of this.knolls) {
+      const d = Math.hypot(x - knoll.x, z - knoll.z) / knoll.radius;
       if (d >= 1) continue;
       const falloff = 1 - d * d;
-      height += hill.height * falloff * falloff;
+      height += knoll.height * falloff * falloff * ramp;
     }
-    return height * blend;
+    return height;
   }
 
   /** Stamp a bare-earth disc, e.g. under a kiosk or along a path. */
   addDirtPatch(x: number, z: number, radius: number): void {
     this.patches.push({ x, z, radius });
+  }
+
+  /** Forget every stamped patch, so a rebuilt scenery does not inherit the old one. */
+  clearDirtPatches(): void {
+    this.patches.length = 0;
   }
 
   /** Re-run vertex colouring after patches have been added. */
@@ -123,18 +174,20 @@ export class Terrain {
   }
 
   private build(): BufferGeometry {
-    const { rings, segments, outerRadius } = this.options;
+    const { rings, segments, outerRadius, flatRadius } = this.options;
     const vertexCount = rings * segments + 1;
     const positions = new Float32Array(vertexCount * 3);
     const normals = new Float32Array(vertexCount * 3);
     const colors = new Float32Array(vertexCount * 3);
 
-    // Ring radii ramp quadratically: tight spacing where the player walks,
-    // wide spacing out at the horizon.
+    // Rings are spaced so that half of them land inside the flat play area -
+    // which is where shadows and the dirt patches need resolution - and the
+    // rest stretch out over the rampart, where a 4 m triangle is invisible.
+    const insideRings = Math.round(rings * 0.45);
     const radiusAt = (ring: number): number => {
-      const t = ring / rings;
-      const eased = t * t * 0.86 + t * 0.14;
-      return eased * outerRadius;
+      if (ring <= insideRings) return (ring / insideRings) * flatRadius;
+      const t = (ring - insideRings) / (rings - insideRings);
+      return flatRadius + (t * t * 0.62 + t * 0.38) * (outerRadius - flatRadius);
     };
 
     positions[0] = 0;
@@ -178,7 +231,9 @@ export class Terrain {
     geometry.setAttribute('normal', new BufferAttribute(normals, 3));
     geometry.setAttribute('color', new BufferAttribute(colors, 3));
     geometry.setIndex(
-      vertexCount > 65535 ? new BufferAttribute(new Uint32Array(triangles), 1) : new BufferAttribute(new Uint16Array(triangles), 1),
+      vertexCount > 65535
+        ? new BufferAttribute(new Uint32Array(triangles), 1)
+        : new BufferAttribute(new Uint16Array(triangles), 1),
     );
     geometry.computeVertexNormals();
     this.paint(geometry);
@@ -205,7 +260,7 @@ export class Terrain {
       const z = positions.getZ(i);
 
       // Hilltops catch more light; hollows stay in shadow.
-      const heightTint = clamp01(y / Math.max(this.options.hillHeight, 1));
+      const heightTint = clamp01(y / Math.max(this.options.rampHeight, 1));
       tint.copy(grassDark).lerp(grass, 0.45 + heightTint * 0.55);
       // A little per-vertex variation stops the plain from looking laminated.
       tint.multiplyScalar(0.92 + rng.next() * 0.16);

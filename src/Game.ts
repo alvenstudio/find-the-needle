@@ -23,7 +23,12 @@ import {
   type UpgradeId,
 } from './gameplay/Content';
 import { DigSystem } from './gameplay/DigSystem';
-import { InteractionSystem, type Interactable } from './gameplay/Interactables';
+import {
+  InteractionSystem,
+  SPAWN_ANGLE,
+  SPAWN_MARGIN,
+  type Interactable,
+} from './gameplay/Interactables';
 import { Meta, type RunSummary } from './gameplay/Meta';
 import { Player } from './gameplay/Player';
 import { Run, makeRunSeed } from './gameplay/Run';
@@ -58,6 +63,17 @@ type GameState = 'loading' | 'title' | 'playing' | 'paused' | 'summary';
 
 /** Where hay flies to: a point just below the camera, at the player's chest. */
 const COLLECT_OFFSET = new Vector3(0, -0.45, 0);
+
+/**
+ * Metres between the kiosk ring and the boundary fence.
+ *
+ * Everything the player can reach lives in this band: the buildings, the yard
+ * clutter, the spawn pad. It is the one number that sets how big the world is,
+ * and it is deliberately small - a yard you can cross in ten seconds keeps the
+ * fill-and-sell loop tight, and the rampart of hills outside it does the work
+ * that an open horizon used to.
+ */
+const BOUNDARY_MARGIN = 17;
 
 /** How each species behaves once it is in the yard. */
 const LIVESTOCK: Record<string, { model: string; count: number; roam: number; speed: number }> = {
@@ -300,10 +316,8 @@ export class Game {
    * cannot drift apart.
    */
   private spawnPoint(): { x: number; z: number } {
-    const ring = this.currentTier.radius + 7.5;
-    const angle = Math.PI * 1.5;
-    const distance = ring + 5.5;
-    return { x: Math.cos(angle) * distance, z: Math.sin(angle) * distance };
+    const distance = this.currentTier.radius + 7.5 + SPAWN_MARGIN;
+    return { x: Math.cos(SPAWN_ANGLE) * distance, z: Math.sin(SPAWN_ANGLE) * distance };
   }
 
   private buildScenery(): void {
@@ -311,14 +325,18 @@ export class Game {
     this.scenery?.dispose();
     this.livestock?.dispose();
     const tier = this.currentTier;
+    this.terrain.clearDirtPatches();
     this.scenery = new Scenery(this.assets, this.terrain, this.collision, {
       seed: hashSeed(tier.id),
       scene: tier.scene,
       pileRadius: tier.radius,
       ringMargin: 7.5,
+      boundaryMargin: BOUNDARY_MARGIN,
       scatterRadius: this.engine.settings.scatterDistance,
     });
     this.engine.scene.add(this.scenery.group);
+    // The fence is drawn, but this is what actually keeps the player in it.
+    this.collision.boundaryRadius = this.scenery.boundaryRadius;
 
     this.interactions.build(this.scenery.ringRadius, {
       rebirthUnlocked: true,
@@ -343,10 +361,14 @@ export class Game {
 
     const sell = this.interactions.positionOf('sell');
     if (sell) {
-      // Just behind the trough, on the far side from the player's approach.
+      // Beside the trough, not behind it. Standing the cow on the line between
+      // the spawn pad and the stack means the first thing a new player sees is
+      // a cow's backside filling the screen.
       const outward = Math.hypot(sell.x, sell.z) || 1;
-      const cowX = sell.x + (sell.x / outward) * 1.9;
-      const cowZ = sell.z + (sell.z / outward) * 1.9;
+      const alongX = sell.x / outward;
+      const alongZ = sell.z / outward;
+      const cowX = sell.x + alongX * 0.9 - alongZ * 2.1;
+      const cowZ = sell.z + alongZ * 0.9 + alongX * 2.1;
       const cow = livestock.add(
         { model: 'cow', count: 1, roam: 0, speed: 0 },
         cowX,

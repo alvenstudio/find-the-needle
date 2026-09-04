@@ -36,6 +36,19 @@ export interface Interactable {
   enabled: boolean;
 }
 
+/**
+ * Where a run starts, as an angle on the working ring.
+ *
+ * Shared with `Game.spawnPoint` so the pad the player is standing on and the
+ * place the controller puts them cannot drift apart. Offset from the sell
+ * point's 1.5pi by about sixteen degrees: close enough that the first
+ * fill-and-sell is a few steps, far enough that the haystack is not hidden
+ * behind the trough's price board on arrival.
+ */
+export const SPAWN_ANGLE = Math.PI * 1.59;
+/** Metres beyond the working ring where the spawn pad sits. */
+export const SPAWN_MARGIN = 5.5;
+
 export class InteractionSystem {
   readonly group = new Group();
   readonly triggered = new Signal<Interactable>();
@@ -171,11 +184,12 @@ export class InteractionSystem {
       this.items.push(item);
     }
 
-    // The spawn pad marks where the player arrives, opposite the sell point.
+    // The spawn pad marks where the player arrives, a stride to one side of
+    // the sell point so the trough's price board is beside the sightline to
+    // the stack rather than square in the middle of it.
     if (this.assets.has('spawn_pad')) {
-      const angle = Math.PI * 1.5;
-      const x = Math.cos(angle) * (ringRadius + 5.5);
-      const z = Math.sin(angle) * (ringRadius + 5.5);
+      const x = Math.cos(SPAWN_ANGLE) * (ringRadius + SPAWN_MARGIN);
+      const z = Math.sin(SPAWN_ANGLE) * (ringRadius + SPAWN_MARGIN);
       const pad = this.assets.instantiate('spawn_pad');
       pad.position.set(x, this.terrain.heightAt(x, z) + 0.02, z);
       pad.matrixAutoUpdate = false;
