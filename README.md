@@ -7,6 +7,11 @@ browser. There are no textures, no audio files and no third-party assets.
 
 **One needle. A million straws.**
 
+The game itself is in **Russian**; the code, the comments and this file are in
+English. Strings are translated in place rather than behind an i18n layer -
+the game ships in one language, and a lookup table with a fallback chain would
+be three moving parts serving a switch nobody can throw.
+
 ---
 
 ## The game
@@ -45,6 +50,19 @@ within a few hours and the economy dies with it. A tree that resets means the
 ten-second "something to buy" clock ticks from the first pull of every session,
 and a run becomes a self-contained thing you can win.
 
+### The yard
+
+Everything the player can reach is inside a ring of post-and-rail seventeen
+metres beyond the kiosks: the stack, the shop, the barn - which has a real
+doorway and bales inside it - and the animals. Outside the fence the ground
+rises into a rampart of hills that closes the horizon in every direction.
+
+A bowl the player cannot see out of is a hundred metres across instead of six
+hundred, and it removes the need to dress a far field nobody will ever visit.
+The fence is drawn as one `InstancedMesh` and carries no colliders: a single
+analytic radius in `CollisionWorld` is the wall, and it cannot develop the gap
+that a ring of eighty boxes eventually will.
+
 ### What is in a stack
 
 - **The needle.** Its burial depth is not random — it is *authored*. The game
@@ -60,14 +78,14 @@ and a run becomes a self-contained thing you can win.
 
 ### Six stacks
 
-| Stack | Straws | Mood |
-| --- | --- | --- |
-| The Home Stack | 12,000 | Midday |
-| The Barn Loft | 33,000 | Overcast |
-| Sunset Field | 95,000 | Golden hour |
-| Storm Silo | 260,000 | Storm |
-| Moonlit Meadow | 550,000 | Night |
-| The Mother Lode | 1,000,000 | Dawn |
+| Stack | In game | Straws | Mood |
+| --- | --- | --- | --- |
+| The Home Stack | Домашний стог | 12,000 | Midday |
+| The Barn Loft | Сеновал | 33,000 | Overcast |
+| Sunset Field | Закатное поле | 95,000 | Golden hour |
+| Storm Silo | Грозовой силос | 260,000 | Storm |
+| Moonlit Meadow | Лунный луг | 550,000 | Night |
+| The Mother Lode | Золотая жила | 1,000,000 | Dawn |
 
 Each is bigger than the last, pays more per straw and starts you with a better
 tool, so a run takes roughly the same eight minutes on every one of them. What
@@ -91,9 +109,23 @@ changes is the scale of the numbers and the light you are working in.
 | **J** | Jobs board |
 | **M** | Travel |
 | **Esc** | Pause |
+| **~** | Admin console |
+| **F3** | Performance readout |
+
+The four panels also live on an action rail down the right of the HUD, which
+is what gives a phone - where there is no B key - a shop at all.
 
 On a phone: left half of the screen is a movement stick, right half looks and
 digs.
+
+### The admin console
+
+`~` opens a panel that can reach anything the game can do: jump between
+stacks, print cash and gems, max the shop, dig the pile to an exact
+percentage, fly through walls, surface the needle, swap the lighting. Its
+buttons and its command line run the same verbs, and it talks to the game
+through one interface (`DevApi`), so no gameplay code carries an
+`if (devMode)`.
 
 ---
 
@@ -145,6 +177,10 @@ pile is bound by total instance count, so moving instances from *everywhere* to
 - **Fixed-timestep loop.** Gameplay advances in exact 1/60 s steps; rendering is
   decoupled and interpolates, so the game plays identically on a 30 Hz laptop
   and a 240 Hz monitor.
+- **Procedural animal gaits.** There is no `Walk` clip. Legs swing as a
+  function of *distance travelled*, layered on top of the idle the mixer is
+  playing, so a hen scurrying and a cow ambling are the same eight lines with a
+  different stride length and no foot ever skates.
 - **One material language.** Every mesh is authored in Blender with a per-corner
   colour attribute and one of five surface families, so the whole world runs on
   a handful of shared materials with a stylised rim light and wind sway patched
@@ -167,12 +203,12 @@ bigger stack means more walking between working faces.
 ```
 === per-stack pacing (no perks, needle at the median quantile) ===
   stack                 time  first  gap p50  gap p90  buys   upg    dead      hay  tool
-  The Home Stack       7m27s   5.3s    11.5s    19.0s    32   14%   0m19s     5.0K  pitchfork
-  The Barn Loft        8m35s   5.6s    12.4s    23.9s    34   15%   0m10s    15.4K  pitchfork
-  Sunset Field         9m06s   5.6s    12.5s    24.7s    35   16%   0m00s    46.6K  pitchfork
-  Storm Silo           9m35s   5.7s    12.7s    25.2s    35   16%   0m19s     133K  rake
-  Moonlit Meadow      10m02s   5.8s    12.9s    26.0s    36   16%   0m06s     295K  blower
-  The Mother Lode     10m27s   5.8s    12.9s    26.0s    37   17%   0m00s     567K  vacuum
+  Домашний стог        7m27s   5.3s    11.5s    19.0s    32   14%   0m19s     5.0K  pitchfork
+  Сеновал              8m35s   5.6s    12.4s    23.9s    34   15%   0m10s    15.4K  pitchfork
+  Закатное поле        9m06s   5.6s    12.5s    24.7s    35   16%   0m00s    46.6K  pitchfork
+  Грозовой силос       9m35s   5.7s    12.7s    25.2s    35   16%   0m19s     133K  rake
+  Лунный луг          10m02s   5.8s    12.9s    26.0s    36   16%   0m06s     295K  blower
+  Золотая жила        10m27s   5.8s    12.9s    26.0s    37   17%   0m00s     567K  vacuum
 ```
 
 First purchase at five seconds, one every twelve seconds after that, and no
