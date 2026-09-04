@@ -541,9 +541,11 @@ CAT_BONES = [
     ("root", (0.0, 0.04, 0.0), (0.0, 0.04, 0.10), None),
     ("body", (0.0, 0.04, 0.10), (0.0, 0.04, 0.30), "root"),
     ("head", (0.0, -0.03, 0.29), (0.0, -0.03, 0.43), "body"),
-    ("tail1", (0.0, 0.14, 0.05), (0.0, 0.19, 0.16), "root"),
-    ("tail2", (0.0, 0.19, 0.16), (0.0, 0.235, 0.27), "tail1"),
-    ("tail3", (0.0, 0.235, 0.27), (0.0, 0.245, 0.39), "tail2"),
+    # The chain starts *inside* the haunch and climbs backward, so the first
+    # segment is half-buried and the joint never shows.
+    ("tail1", (0.0, 0.160, 0.075), (0.0, 0.215, 0.155), "root"),
+    ("tail2", (0.0, 0.215, 0.155), (0.0, 0.250, 0.270), "tail1"),
+    ("tail3", (0.0, 0.250, 0.270), (0.0, 0.245, 0.400), "tail2"),
 ]
 
 
@@ -602,10 +604,15 @@ def cat_parts():
         parts.append((box("CatPaw", (0.062, 0.085, 0.045), (side * 0.048, -0.10, 0.0225),
                           color="white"), "root"))
 
+    # Each segment is centred on its bone and pitched to lie along it. The sign
+    # matters: rot about X sends +Z toward -Y, so a *positive* pitch throws the
+    # tail forward over the cat's own head. Negative leans it back, where a tail
+    # goes. Lengths overrun the bones slightly so neighbours interpenetrate
+    # instead of leaving a gap the eye reads as a floating block.
     for index, (size, loc, pitch, bone) in enumerate([
-        ((0.052, 0.052, 0.135), (0.0, 0.163, 0.105), 35.0, "tail1"),
-        ((0.048, 0.048, 0.13), (0.0, 0.215, 0.215), 18.0, "tail2"),
-        ((0.044, 0.044, 0.125), (0.0, 0.24, 0.33), 5.0, "tail3"),
+        ((0.052, 0.052, 0.118), (0.0, 0.188, 0.115), -34.5, "tail1"),
+        ((0.048, 0.048, 0.136), (0.0, 0.233, 0.213), -16.9, "tail2"),
+        ((0.044, 0.044, 0.146), (0.0, 0.248, 0.335), 2.2, "tail3"),
     ]):
         segment = box(f"CatTail{index}", size, loc, rot_deg=(pitch, 0.0, 0.0),
                       color="pumpkin")

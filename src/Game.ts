@@ -32,8 +32,9 @@ import { GameUi, type CrosshairState } from './ui/GameUi';
 import { CollisionWorld } from './world/Collision';
 import { Environment } from './world/Environment';
 import { HayPile } from './world/HayPile';
+import { Livestock } from './world/Livestock';
 import { CRITICAL_ASSETS, DEFERRED_ASSETS } from './world/Manifest';
-import { Scenery } from './world/Scenery';
+import { SCENE_PALETTES, Scenery } from './world/Scenery';
 import { Terrain } from './world/Terrain';
 
 /**
@@ -56,6 +57,14 @@ type GameState = 'loading' | 'title' | 'playing' | 'paused' | 'summary';
 /** Where hay flies to: a point just below the camera, at the player's chest. */
 const COLLECT_OFFSET = new Vector3(0, -0.45, 0);
 
+/** How each species behaves once it is in the yard. */
+const LIVESTOCK: Record<string, { model: string; count: number; roam: number; speed: number }> = {
+  cow: { model: 'cow', count: 0, roam: 3.5, speed: 0.5 },
+  chicken: { model: 'chicken', count: 0, roam: 4.5, speed: 0.9 },
+  cat: { model: 'cat', count: 0, roam: 3, speed: 0.7 },
+  crow: { model: 'crow', count: 0, roam: 5, speed: 1.1 },
+};
+
 export class Game {
   private readonly engine: Engine;
   private readonly materials = new MaterialLibrary();
@@ -76,6 +85,7 @@ export class Game {
   private pile: HayPile | null = null;
   private buried: BuriedField | null = null;
   private scenery: Scenery | null = null;
+  private livestock: Livestock | null = null;
   private interactions: InteractionSystem;
   private dig: DigSystem | null = null;
   private viewmodel: Viewmodel | null = null;
@@ -276,6 +286,7 @@ export class Game {
   private buildScenery(): void {
     if (!this.pile) return;
     this.scenery?.dispose();
+    this.livestock?.dispose();
     const tier = this.currentTier;
     this.scenery = new Scenery(this.assets, this.terrain, this.collision, {
       seed: hashSeed(tier.id),
@@ -287,10 +298,49 @@ export class Game {
     this.engine.scene.add(this.scenery.group);
 
     this.interactions.build(this.scenery.ringRadius, {
-      rebirthUnlocked: false,
+      rebirthUnlocked: true,
       hasNextTier: true,
     });
+    this.populate(tier);
     this.terrain.refreshColors();
+  }
+
+  /**
+   * Put animals in the yard, and a cow at the trough.
+   *
+   * The cow is the whole fiction of the sell point - you are feeding it, and it
+   * pays you - so it is placed by hand beside the trough and turned to face
+   * whoever walks up, while the rest of the livestock wanders the ring.
+   */
+  private populate(tier: TierDefinition): void {
+    if (!this.scenery) return;
+    const livestock = new Livestock(this.assets, this.terrain, hashSeed(`${tier.id}:stock`));
+    this.engine.scene.add(livestock.group);
+    this.livestock = livestock;
+
+    const sell = this.interactions.positionOf('sell');
+    if (sell) {
+      // Just behind the trough, on the far side from the player's approach.
+      const outward = Math.hypot(sell.x, sell.z) || 1;
+      const cowX = sell.x + (sell.x / outward) * 1.9;
+      const cowZ = sell.z + (sell.z / outward) * 1.9;
+      const cow = livestock.add(
+        { model: 'cow', count: 1, roam: 0, speed: 0 },
+        cowX,
+        cowZ,
+        0,
+      );
+      if (cow) livestock.faceToward(cow, sell.x, sell.z);
+    }
+
+    const palette = SCENE_PALETTES[tier.scene];
+    const inner = tier.radius + 4;
+    const outer = this.scenery.ringRadius + 9;
+    for (const entry of palette.animals) {
+      const spec = LIVESTOCK[entry.model];
+      if (!spec) continue;
+      livestock.scatter({ ...spec, count: entry.count }, inner, outer);
+    }
   }
 
   private disposeStack(): void {
@@ -851,6 +901,7 @@ export class Game {
     this.screen.apply(this.engine.camera, this.player.desiredFov(settings.fov));
     this.environment.update(dt, this.engine.camera, this.player.position);
     this.scenery?.update(dt);
+    this.livestock?.update(dt);
     this.flash.update(dt);
 
     this.input.drainLook(this.lookDelta);
@@ -909,6 +960,7 @@ export class Game {
     this.engine.stop();
     this.disposeStack();
     this.scenery?.dispose();
+    this.livestock?.dispose();
     this.interactions.dispose();
     this.particles?.dispose();
     this.viewmodel?.dispose();
