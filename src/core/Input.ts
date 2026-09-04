@@ -53,6 +53,14 @@ const DEFAULT_BINDINGS: Record<string, Action> = {
   Tab: 'map',
 };
 
+/**
+ * Largest per-event mouse motion we will believe, in pixels.
+ *
+ * Generous enough for the fastest real flick at any sensible DPI, small enough
+ * that a spurious jump cannot spin the camera more than a few degrees.
+ */
+const MAX_MOTION_PX = 400;
+
 /** Actions that are also driven by mouse buttons. */
 const MOUSE_BINDINGS: Record<number, Action> = {
   0: 'dig',
@@ -83,6 +91,9 @@ export class Input {
   sensitivity = 1;
   invertY = false;
   enabled = true;
+
+  /** True for exactly one mousemove after a pointer lock is granted. */
+  private discardNextMotion = false;
 
   private touchLookId = -1;
   private touchMoveId = -1;
@@ -264,16 +275,34 @@ export class Input {
 
     this.listen(document, 'mousemove', (event: MouseEvent) => {
       if (!this.isLocked || !this.enabled) return;
+      // The first motion after a lock is granted is not a movement the player
+      // made. Chrome reports the jump from wherever the cursor was to the
+      // centre of the element, which at this sensitivity is a whole turn and a
+      // faceful of sky - the single most common "I clicked Play and it broke"
+      // report there is.
+      if (this.discardNextMotion) {
+        this.discardNextMotion = false;
+        return;
+      }
       // 0.0022 rad/px at sensitivity 1 matches the de-facto FPS standard of
-      // ~0.022 deg per count at 400 DPI.
+      // ~0.022 deg per count at 400 DPI. The clamp is a second line of
+      // defence: no human flick is 400 px in one event, but an alt-tab, a
+      // remote desktop or a synthetic event can be.
       const scale = 0.0022 * this.sensitivity;
-      this.look.yaw -= event.movementX * scale;
-      this.look.pitch += event.movementY * scale * (this.invertY ? 1 : -1);
+      const dx = clamp(event.movementX, -MAX_MOTION_PX, MAX_MOTION_PX);
+      const dy = clamp(event.movementY, -MAX_MOTION_PX, MAX_MOTION_PX);
+      this.look.yaw -= dx * scale;
+      this.look.pitch += dy * scale * (this.invertY ? 1 : -1);
     });
 
     this.listen(document, 'pointerlockchange', () => {
       const locked = this.isLocked;
       if (!locked) this.releaseAll();
+      else this.discardNextMotion = true;
+      // Whatever was accumulated before the lock changed belongs to the old
+      // state; draining it here stops a queued flick arriving a frame later.
+      this.look.yaw = 0;
+      this.look.pitch = 0;
       this.pointerLockChanged.emit(locked);
     });
 

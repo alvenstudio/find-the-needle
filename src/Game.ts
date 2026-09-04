@@ -107,6 +107,8 @@ export class Game {
   private livestock: Livestock | null = null;
   private interactions: InteractionSystem;
   private dig: DigSystem | null = null;
+  /** Detaches the pile's ground sampler; see `openStack`. */
+  private releasePileElevator: (() => void) | null = null;
   private viewmodel: Viewmodel | null = null;
   private particles: Particles | null = null;
 
@@ -285,7 +287,10 @@ export class Game {
     });
     this.engine.scene.add(this.pile.group);
     // The pile is walkable: standing on it is how the player reaches the crown.
-    this.collision.addElevator((x, z) => this.pile?.surfaceHeightAt(x, z) ?? 0);
+    // The handle matters - `CollisionWorld.clear()` drops colliders, not ground
+    // layers, so without it every stack the player travels to leaves another
+    // sampler behind for `surfaceHeight` to walk.
+    this.releasePileElevator = this.collision.addElevator((x, z) => this.pile?.surfaceHeightAt(x, z) ?? 0);
 
     this.run = new Run(tier, seed, this.meta.perks);
     this.dig = new DigSystem(this.pile);
@@ -323,8 +328,19 @@ export class Game {
 
   private buildScenery(): void {
     if (!this.pile) return;
-    this.scenery?.dispose();
-    this.livestock?.dispose();
+    // `dispose` empties a group; it does not detach it. Travelling six times
+    // used to leave twelve orphaned Groups in the scene, each of them still
+    // walked by every `traverse` the renderer does.
+    if (this.scenery) {
+      this.engine.scene.remove(this.scenery.group);
+      this.scenery.dispose();
+      this.scenery = null;
+    }
+    if (this.livestock) {
+      this.engine.scene.remove(this.livestock.group);
+      this.livestock.dispose();
+      this.livestock = null;
+    }
     const tier = this.currentTier;
     this.terrain.clearDirtPatches();
     this.scenery = new Scenery(this.assets, this.terrain, this.collision, {
@@ -403,6 +419,8 @@ export class Game {
   }
 
   private disposeStack(): void {
+    this.releasePileElevator?.();
+    this.releasePileElevator = null;
     if (this.pile) {
       this.engine.scene.remove(this.pile.group);
       this.pile.dispose();
@@ -696,7 +714,7 @@ export class Game {
     this.meta.recordSale(result.straws, result.cash);
     if (this.tutorialStep === 1) {
       this.tutorialStep = 2;
-      this.ui.toast('Нажми B, чтобы потратить. С иголкой всё обнулится.', 'info', '🛒');
+      this.ui.toast('Потрать их в Лавке — кнопка справа. С иголкой всё обнулится.', 'info', '🛒');
     } else if (this.tutorialStep === 2) {
       this.tutorialStep = -1;
     }

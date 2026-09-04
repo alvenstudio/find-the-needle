@@ -31,7 +31,6 @@ import { Rng } from '../core/Rng';
  */
 
 interface Particle {
-  active: boolean;
   life: number;
   maxLife: number;
   readonly position: Vector3;
@@ -70,7 +69,6 @@ class Pool {
 
     for (let i = 0; i < capacity; i++) {
       this.particles.push({
-        active: false,
         life: 0,
         maxLife: 1,
         position: new Vector3(),
@@ -84,46 +82,59 @@ class Pool {
         color: new Color(1, 1, 1),
       });
     }
-    // Everything starts collapsed so unused slots draw nothing.
-    this.matrix.makeScale(0, 0, 0);
-    for (let i = 0; i < capacity; i++) this.mesh.setMatrixAt(i, this.matrix);
-    this.mesh.instanceMatrix.needsUpdate = true;
+    // Nothing is alive yet, so nothing is drawn. `count` grows and shrinks
+    // with the live range from here on.
+    this.mesh.count = 0;
   }
 
   get liveCount(): number {
     return this.live;
   }
 
-  /** Claim a slot, recycling the oldest when the pool is saturated. */
+  /**
+   * Claim a slot, recycling the oldest when the pool is saturated.
+   *
+   * Live particles are kept packed into `[0, live)`, which is what lets the
+   * mesh draw exactly the particles that exist. When the pool is full the
+   * oldest slot is reused in place - dropping a particle nobody will miss is
+   * better than growing the pool or skipping the spawn.
+   */
   spawn(): Particle {
     const capacity = this.particles.length;
-    for (let i = 0; i < capacity; i++) {
-      const index = (this.cursor + i) % capacity;
-      const particle = this.particles[index];
-      if (!particle.active) {
-        this.cursor = (index + 1) % capacity;
-        particle.active = true;
-        this.live++;
-        return particle;
-      }
-    }
-    const particle = this.particles[this.cursor];
-    this.cursor = (this.cursor + 1) % capacity;
+    const particle =
+      this.live < capacity
+        ? this.particles[this.live++]
+        : this.particles[(this.cursor = (this.cursor + 1) % capacity)];
+    // Resetting the clock is the pool's invariant, not the caller's: a slot
+    // handed out with a stale `life` dies on the frame it is born.
+    particle.life = 0;
     return particle;
   }
 
+  /**
+   * Step every live particle.
+   *
+   * The loop runs over `[0, live)` and swap-removes the dead, so a quiet frame
+   * costs nothing and the mesh's `count` is exactly the number of particles on
+   * screen. Before this the pool drew - and stepped - its full capacity every
+   * frame whether or not anything was happening, which on the largest budget
+   * was forty-five thousand triangles of collapsed nothing.
+   */
   update(dt: number, target: Vector3 | null): void {
     let dirty = false;
-    for (let index = 0; index < this.particles.length; index++) {
+    for (let index = 0; index < this.live; index++) {
       const particle = this.particles[index];
-      if (!particle.active) continue;
 
       particle.life += dt;
       if (particle.life >= particle.maxLife) {
-        particle.active = false;
+        // Swap the last live particle into this slot and re-test it, so the
+        // live range stays contiguous without a second pass.
         this.live--;
-        this.matrix.makeScale(0, 0, 0);
-        this.mesh.setMatrixAt(index, this.matrix);
+        if (index !== this.live) {
+          this.particles[index] = this.particles[this.live];
+          this.particles[this.live] = particle;
+        }
+        index--;
         dirty = true;
         continue;
       }
@@ -167,20 +178,17 @@ class Pool {
       dirty = true;
     }
 
-    if (dirty) {
+    if (dirty || this.mesh.count !== this.live) {
+      this.mesh.count = this.live;
       this.mesh.instanceMatrix.needsUpdate = true;
       if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
     }
   }
 
   clear(): void {
-    for (let index = 0; index < this.particles.length; index++) {
-      this.particles[index].active = false;
-      this.matrix.makeScale(0, 0, 0);
-      this.mesh.setMatrixAt(index, this.matrix);
-    }
     this.live = 0;
-    this.mesh.instanceMatrix.needsUpdate = true;
+    this.cursor = 0;
+    this.mesh.count = 0;
   }
 
   dispose(): void {

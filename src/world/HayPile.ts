@@ -10,6 +10,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   Quaternion,
+  Sphere,
   Vector3,
 } from 'three';
 
@@ -55,6 +56,8 @@ export interface HayPileOptions extends HeightFieldOptions {
   bandBudget: number;
   /** Shell straws per square metre of footprint, before the budget cap. */
   shellDensity?: number;
+  /** Band straws per square metre, before the budget cap. */
+  bandDensity?: number;
   /** Radius of the detail band around the player. */
   bandRadius?: number;
   position?: Vector3;
@@ -68,6 +71,8 @@ export interface DislodgedStraw {
 }
 
 const STRAW_SINK = 0.05;
+/** How far a straw can stick out past its anchor, for bounding spheres. */
+const STRAW_REACH = 0.4;
 const MIN_VISIBLE_HEIGHT = 0.03;
 /** How far the player must move before the detail band is re-seeded. */
 const BAND_REBUILD_DISTANCE = 0.42;
@@ -145,13 +150,21 @@ export class HayPile {
     // double the vertex cost of the most expensive object in the scene.
     this.shell.castShadow = false;
     this.shell.receiveShadow = false;
-    this.shell.frustumCulled = false;
     this.shell.matrixAutoUpdate = false;
     this.shell.updateMatrix();
     this.group.add(this.shell);
 
-    this.bandRadius = options.bandRadius ?? 6.5;
-    const bandCount = Math.max(0, options.bandBudget);
+    // The detail band exists to thicken the hay the player is nose-to-nose
+    // with. On a five-metre Home Stack a 6.5 m band covers the entire pile and
+    // simply doubles its density everywhere, which is 15,000 instances buying
+    // nothing - so it is scaled to the pile, and its count follows the area it
+    // actually covers rather than a fixed budget.
+    this.bandRadius = Math.min(options.bandRadius ?? 6.5, options.radius * 0.95 + 1.2);
+    const bandArea = Math.PI * this.bandRadius * this.bandRadius;
+    const bandCount = Math.max(
+      0,
+      Math.min(options.bandBudget, Math.ceil(bandArea * (options.bandDensity ?? 300))),
+    );
     this.bandOffsetX = new Float32Array(bandCount);
     this.bandOffsetZ = new Float32Array(bandCount);
     this.bandScale = new Float32Array(bandCount);
@@ -161,7 +174,6 @@ export class HayPile {
       this.band.instanceMatrix.setUsage(DynamicDrawUsage);
       this.band.castShadow = false;
       this.band.receiveShadow = false;
-      this.band.frustumCulled = false;
       this.band.matrixAutoUpdate = false;
       this.band.updateMatrix();
       this.group.add(this.band);
@@ -174,6 +186,13 @@ export class HayPile {
     this.scatterBand(rng);
     this.refreshShell(0, 0, this.field.resolution - 1, this.field.resolution - 1, false);
     this.syncCore(0, 0, this.field.resolution - 1, this.field.resolution - 1);
+
+    // Frustum culling an InstancedMesh needs a sphere over the *instances*;
+    // without one three.js falls back to the geometry's, which describes a
+    // single 32 cm straw and culls the whole pile the moment the origin leaves
+    // the frustum. Heights only fall and anchors never move, so the sphere
+    // computed here bounds every state the pile will ever be in.
+    this.shell.computeBoundingSphere();
   }
 
   // ------------------------------------------------------------- public API
@@ -491,6 +510,15 @@ export class HayPile {
       band.setMatrixAt(i, this.matrix);
     }
     band.instanceMatrix.needsUpdate = true;
+
+    // The band moves with the player, so its bounds move too. Setting them
+    // analytically - a sphere over the band's own footprint, tall enough for
+    // the pile - is exact and O(1); `computeBoundingSphere` would walk every
+    // instance matrix ten times a second to arrive at the same answer.
+    const sphere = band.boundingSphere ?? new Sphere();
+    sphere.center.set(this.bandAnchor.x, baseY + this.field.peak * 0.5, this.bandAnchor.z);
+    sphere.radius = Math.hypot(this.bandRadius + STRAW_REACH, this.field.peak * 0.5);
+    band.boundingSphere = sphere;
   }
 
   /** Re-place every shell straw whose cell falls inside the rectangle. */
