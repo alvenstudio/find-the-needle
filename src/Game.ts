@@ -356,6 +356,11 @@ export class Game {
   private populate(tier: TierDefinition): void {
     if (!this.scenery) return;
     const livestock = new Livestock(this.assets, this.terrain, hashSeed(`${tier.id}:stock`));
+    // The world layer knows nothing about audio; it just says who made a noise
+    // and where, and the game turns that into a positional voice.
+    livestock.voice = (sound, position) => {
+      this.audio.play(sound as Parameters<AudioSystem['play']>[0], { position, volume: 0.9 });
+    };
     this.engine.scene.add(livestock.group);
     this.livestock = livestock;
 

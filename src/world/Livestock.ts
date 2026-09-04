@@ -1,7 +1,15 @@
-import { AnimationMixer, Group, Object3D, Vector3, type AnimationAction } from 'three';
+import {
+  AnimationMixer,
+  Group,
+  Object3D,
+  Quaternion,
+  Vector3,
+  type AnimationAction,
+  type Bone,
+} from 'three';
 
 import type { Assets } from '../core/Assets';
-import { dampAngle } from '../core/MathX';
+import { clamp01, dampAngle } from '../core/MathX';
 import { Rng } from '../core/Rng';
 import type { Terrain } from './Terrain';
 
@@ -10,13 +18,29 @@ import type { Terrain } from './Terrain';
  *
  * A farmyard with nothing moving in it reads as a diorama. A cow that chews, a
  * few hens that potter about and a crow that ticks its head turn the same
- * geometry into a place, and the whole system is a couple of hundred lines
- * because the animals need no intelligence at all - only somewhere to go and
- * the patience to get there.
+ * geometry into a place, and the whole system is a few hundred lines because
+ * the animals need no intelligence at all - only somewhere to go, the patience
+ * to get there, and legs that move while they do.
  *
  * Every animal is a skinned glTF with an `Idle` clip and sometimes an `Eat` or
  * `Peck`; the mixer cross-fades between them on a timer so no two are ever in
  * step.
+ *
+ * WALKING IS PROCEDURAL, AND ON PURPOSE
+ * -------------------------------------
+ * There is no `Walk` clip. A baked one would be a fixed cadence that only ever
+ * matches one speed, and it would have to be authored four times over for four
+ * skeletons that share no bone names. Instead the gait is driven by *distance
+ * travelled*: legs swing as a function of how far the animal has actually
+ * moved, so a hen scurrying and a cow ambling are the same eight lines with a
+ * different stride length, feet never skate, and an animal that stops mid-step
+ * settles rather than snapping.
+ *
+ * It is layered on top of the mixer rather than replacing it: `mixer.update`
+ * writes the idle breathing first, then the gait overwrites the leg bones. Two
+ * of the four rigs have no leg bones at all - a cat and a crow whose legs are
+ * welded to the root - so for those the gait is carried by the body's bounce
+ * and lean, which is what a stylised animal reads as anyway.
  */
 
 export interface LivestockSpec {
@@ -28,6 +52,115 @@ export interface LivestockSpec {
   speed: number;
   /** Uniform scale multiplier. */
   scale?: number;
+}
+
+/** Called when an animal makes a noise, so the world layer never imports audio. */
+export type VoiceSink = (sound: string, position: Vector3) => void;
+
+/** One bone swung as a function of stride phase. */
+interface Swing {
+  bone: string;
+  /** Fraction of a stride this bone lags the reference leg, 0..1. */
+  phase: number;
+  /** Peak rotation, in radians. */
+  amplitude: number;
+  /** Which of the bone's local axes it turns about. */
+  axis: 'x' | 'y' | 'z';
+}
+
+interface Gait {
+  /** Full strides per metre travelled. Short legs mean a big number. */
+  cadence: number;
+  /** Vertical bounce of the whole animal at full stride, in metres. */
+  bob: number;
+  /** Body roll at full stride, in radians. */
+  roll: number;
+  legs: Swing[];
+  /** Tails, heads and anything else that moves with the walk but is not a leg. */
+  extras?: Swing[];
+  /** The noise it makes, and how often, in seconds. */
+  voice?: { sound: string; gap: [number, number] };
+}
+
+/**
+ * Per-species gaits.
+ *
+ * Leg bones point down the animal's leg, and Blender's roll-0 rule puts the
+ * bone's local Y along it, so fore-and-aft swing is a rotation about local X -
+ * the same channel the authored `Eat` clip uses to shift the cow's weight.
+ *
+ * Phases are in fractions of a stride. The cow trots on diagonal pairs, which
+ * is what a cow actually does at this speed and reads far better than the
+ * "all four legs together" a naive quadruped gait produces.
+ */
+const GAITS: Readonly<Record<string, Gait>> = {
+  cow: {
+    cadence: 0.62,
+    bob: 0.035,
+    roll: 0.035,
+    legs: [
+      { bone: 'leg_fl', phase: 0, amplitude: 0.34, axis: 'x' },
+      { bone: 'leg_br', phase: 0, amplitude: 0.3, axis: 'x' },
+      { bone: 'leg_fr', phase: 0.5, amplitude: 0.34, axis: 'x' },
+      { bone: 'leg_bl', phase: 0.5, amplitude: 0.3, axis: 'x' },
+    ],
+    extras: [
+      { bone: 'tail', phase: 0.25, amplitude: 0.12, axis: 'z' },
+      { bone: 'head', phase: 0.5, amplitude: 0.06, axis: 'x' },
+    ],
+    voice: { sound: 'cow_moo', gap: [14, 40] },
+  },
+  chicken: {
+    cadence: 2.4,
+    bob: 0.022,
+    roll: 0.06,
+    legs: [
+      { bone: 'leg_l', phase: 0, amplitude: 0.55, axis: 'x' },
+      { bone: 'leg_r', phase: 0.5, amplitude: 0.55, axis: 'x' },
+    ],
+    // The head thrust is the whole reason a walking hen is funny, and it runs
+    // at twice the leg cadence: forward on each footfall, not each stride.
+    extras: [
+      { bone: 'neck', phase: 0, amplitude: 0.22, axis: 'x' },
+      { bone: 'body', phase: 0.25, amplitude: 0.07, axis: 'x' },
+    ],
+    voice: { sound: 'chicken_cluck', gap: [7, 22] },
+  },
+  cat: {
+    // No leg bones on this rig, so the walk lives entirely in the body: a low
+    // double bounce per stride and a lazy tail.
+    cadence: 1.5,
+    bob: 0.028,
+    roll: 0.05,
+    legs: [],
+    extras: [
+      { bone: 'tail1', phase: 0, amplitude: 0.1, axis: 'x' },
+      { bone: 'tail2', phase: 0.15, amplitude: 0.13, axis: 'x' },
+      { bone: 'tail3', phase: 0.3, amplitude: 0.16, axis: 'x' },
+      { bone: 'body', phase: 0.5, amplitude: 0.05, axis: 'x' },
+    ],
+    voice: { sound: 'cat_meow', gap: [16, 48] },
+  },
+  crow: {
+    // A crow does not walk so much as hop, so the bounce is large and the
+    // cadence high; the body pitches forward on the way down.
+    cadence: 2.1,
+    bob: 0.055,
+    roll: 0.03,
+    legs: [],
+    extras: [
+      { bone: 'body', phase: 0, amplitude: 0.1, axis: 'x' },
+      { bone: 'tail', phase: 0.5, amplitude: 0.12, axis: 'x' },
+    ],
+    voice: { sound: 'crow_caw', gap: [9, 26] },
+  },
+};
+
+/** A bone the gait drives, resolved once at spawn. */
+interface DrivenBone {
+  bone: Bone;
+  rest: Quaternion;
+  swing: Swing;
 }
 
 interface Animal {
@@ -43,19 +176,33 @@ interface Animal {
   moving: boolean;
   speed: number;
   roam: number;
+  gait: Gait | null;
+  driven: DrivenBone[];
+  /** Stride position, in whole strides. Only the fraction matters. */
+  stride: number;
+  /** 0..1 blend into the walk, so legs settle instead of snapping to rest. */
+  walking: number;
+  /** Seconds until this animal next makes a noise. */
+  voiceTimer: number;
 }
 
 /** How long an animal stands still, chewing or pecking, between walks. */
 const PAUSE_RANGE: [number, number] = [3.5, 11];
 const WALK_RANGE: [number, number] = [2, 6];
 const FADE = 0.4;
+const TAU = Math.PI * 2;
 
 export class Livestock {
   readonly group = new Group();
 
+  /** Set by the game so animals can be heard. Left null in tests. */
+  voice: VoiceSink | null = null;
+
   private readonly animals: Animal[] = [];
   private readonly rng: Rng;
   private readonly scratch = new Vector3();
+  private readonly worldPoint = new Vector3();
+  private readonly rotation = new Quaternion();
 
   constructor(
     private readonly assets: Assets,
@@ -119,6 +266,7 @@ export class Livestock {
       idle.time = this.rng.range(0, idleClip?.duration ?? 1);
     }
 
+    const gait = GAITS[spec.model] ?? null;
     this.animals.push({
       object,
       mixer,
@@ -131,8 +279,30 @@ export class Livestock {
       moving: false,
       speed: spec.speed,
       roam: spec.roam,
+      gait,
+      driven: gait ? this.resolveBones(object, gait) : [],
+      stride: this.rng.next(),
+      walking: 0,
+      voiceTimer: gait?.voice ? this.rng.range(2, gait.voice.gap[1]) : Infinity,
     });
     return object;
+  }
+
+  /**
+   * Find the bones a gait drives and record their rest pose.
+   *
+   * The rest quaternion is the bind pose the exporter baked into the node, and
+   * every swing is applied relative to it - setting a bone's rotation outright
+   * would throw away the rig's own orientation and fold the animal in half.
+   */
+  private resolveBones(object: Object3D, gait: Gait): DrivenBone[] {
+    const driven: DrivenBone[] = [];
+    for (const swing of [...gait.legs, ...(gait.extras ?? [])]) {
+      const node = object.getObjectByName(swing.bone);
+      if (!node) continue;
+      driven.push({ bone: node as Bone, rest: node.quaternion.clone(), swing });
+    }
+    return driven;
   }
 
   update(dt: number): void {
@@ -160,34 +330,88 @@ export class Livestock {
         }
       }
 
-      if (!animal.moving) continue;
+      this.speak(animal, dt);
 
-      this.scratch.set(
-        animal.target.x - animal.object.position.x,
-        0,
-        animal.target.z - animal.object.position.z,
-      );
-      const distance = this.scratch.length();
-      if (distance < 0.12) {
-        animal.moving = false;
-        animal.timer = this.rng.range(...PAUSE_RANGE);
-        this.crossFade(animal, animal.busy ?? animal.idle);
-        continue;
+      let stepLength = 0;
+      if (animal.moving) {
+        this.scratch.set(
+          animal.target.x - animal.object.position.x,
+          0,
+          animal.target.z - animal.object.position.z,
+        );
+        const distance = this.scratch.length();
+        if (distance < 0.12) {
+          animal.moving = false;
+          animal.timer = this.rng.range(...PAUSE_RANGE);
+          this.crossFade(animal, animal.busy ?? animal.idle);
+        } else {
+          this.scratch.divideScalar(distance);
+          stepLength = Math.min(animal.speed * dt, distance);
+          animal.object.position.x += this.scratch.x * stepLength;
+          animal.object.position.z += this.scratch.z * stepLength;
+
+          // Face the way it is walking, easing round rather than snapping.
+          animal.yaw = dampAngle(animal.yaw, Math.atan2(this.scratch.x, this.scratch.z), 4, dt);
+          animal.object.rotation.y = animal.yaw;
+        }
       }
 
-      this.scratch.divideScalar(distance);
-      const stepLength = Math.min(animal.speed * dt, distance);
-      animal.object.position.x += this.scratch.x * stepLength;
-      animal.object.position.z += this.scratch.z * stepLength;
-      animal.object.position.y = this.terrain.heightAt(
-        animal.object.position.x,
-        animal.object.position.z,
-      );
-
-      // Face the way it is walking, easing round rather than snapping.
-      animal.yaw = dampAngle(animal.yaw, Math.atan2(this.scratch.x, this.scratch.z), 4, dt);
-      animal.object.rotation.y = animal.yaw;
+      this.stride(animal, dt, stepLength);
+      animal.object.position.y =
+        this.terrain.heightAt(animal.object.position.x, animal.object.position.z) + this.bounce(animal);
     }
+  }
+
+  /**
+   * Advance the gait and pose the driven bones.
+   *
+   * The phase is driven by metres walked, not by time: that is the whole reason
+   * the feet do not skate, and it means one cadence number covers an animal
+   * dawdling and the same animal hurrying.
+   */
+  private stride(animal: Animal, dt: number, stepLength: number): void {
+    const gait = animal.gait;
+    if (!gait) return;
+
+    animal.stride += stepLength * gait.cadence;
+    // Blend out over about a fifth of a second so a stopping animal puts its
+    // legs down rather than having them vanish to rest between frames.
+    const target = stepLength > 1e-5 ? 1 : 0;
+    animal.walking += (target - animal.walking) * clamp01(dt * 9);
+    if (animal.walking < 0.001) {
+      if (animal.walking !== 0) {
+        animal.walking = 0;
+        for (const driven of animal.driven) driven.bone.quaternion.copy(driven.rest);
+      }
+      return;
+    }
+
+    const phase = animal.stride * TAU;
+    for (const driven of animal.driven) {
+      const angle =
+        Math.sin(phase + driven.swing.phase * TAU) * driven.swing.amplitude * animal.walking;
+      this.rotation.setFromAxisAngle(AXES[driven.swing.axis], angle);
+      driven.bone.quaternion.copy(driven.rest).multiply(this.rotation);
+    }
+
+    animal.object.rotation.z = Math.sin(phase) * gait.roll * animal.walking;
+  }
+
+  /** Vertical bounce: twice a stride, because each stride is two footfalls. */
+  private bounce(animal: Animal): number {
+    const gait = animal.gait;
+    if (!gait || animal.walking < 0.001) return 0;
+    return Math.abs(Math.sin(animal.stride * Math.PI * 2)) * gait.bob * animal.walking;
+  }
+
+  private speak(animal: Animal, dt: number): void {
+    const voice = animal.gait?.voice;
+    if (!voice || !this.voice) return;
+    animal.voiceTimer -= dt;
+    if (animal.voiceTimer > 0) return;
+    animal.voiceTimer = this.rng.range(voice.gap[0], voice.gap[1]);
+    animal.object.getWorldPosition(this.worldPoint);
+    this.voice(voice.sound, this.worldPoint);
   }
 
   /** Turn one animal to face a world point, for the cow at the trough. */
@@ -220,3 +444,9 @@ export class Livestock {
     this.group.clear();
   }
 }
+
+const AXES: Record<'x' | 'y' | 'z', Vector3> = {
+  x: new Vector3(1, 0, 0),
+  y: new Vector3(0, 1, 0),
+  z: new Vector3(0, 0, 1),
+};

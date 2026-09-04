@@ -54,7 +54,11 @@ export type SoundName =
   | 'quest_complete'
   | 'rebirth'
   | 'error'
-  | 'tick';
+  | 'tick'
+  | 'cow_moo'
+  | 'chicken_cluck'
+  | 'cat_meow'
+  | 'crow_caw';
 
 export interface Vec3 {
   x: number;
@@ -1812,6 +1816,195 @@ const SOUNDS: Record<SoundName, SoundSpec> = {
     build(p) {
       tone(p, { freq: 1180 * p.rate, level: 0.24, attack: 0.001, decay: 0.028 });
       burst(p, { freq: 4000 * p.rate, q: 2, level: 0.06, attack: 0.0008, decay: 0.014 });
+    },
+  },
+
+  /* ------------------------------------------------------------- animals */
+
+  /**
+   * A cow.
+   *
+   * An animal call is a driven source through a resonant tract, and that is
+   * exactly what these four patches model: a buzzy oscillator for the vocal
+   * folds, band-passes for the formants that make one species sound different
+   * from another, and a breath layer that stops it reading as a synthesiser.
+   *
+   * The moo is long, low and lazy - a slow rise into the vowel and a longer
+   * fall out of it, with the second formant low enough to keep it a "moo"
+   * rather than a "maa".
+   */
+  cow_moo: {
+    bus: 'sfx',
+    gain: 0.34,
+    detune: 1.6,
+    reverb: 0.3,
+    tail: 1.6,
+    build(p) {
+      const f = p.rate;
+      const body = tone(p, {
+        type: 'sawtooth',
+        freq: 128 * f,
+        toFreq: 108 * f,
+        glide: 1.05,
+        level: 0.34,
+        attack: 0.12,
+        hold: 0.5,
+        release: 0.5,
+      });
+      const throat = p.biquad('lowpass', 620 * f, 1.1);
+      const formant = p.biquad('bandpass', 400 * f, 3.4);
+      body.disconnect();
+      body.connect(throat);
+      throat.connect(p.out);
+      body.connect(formant);
+      formant.connect(p.out);
+      // The little upward bend at the start is what makes it a call and not a
+      // drone; the breath underneath is the animal, not the note.
+      tone(p, {
+        type: 'sawtooth',
+        freq: 96 * f,
+        toFreq: 132 * f,
+        glide: 0.2,
+        level: 0.12,
+        attack: 0.06,
+        decay: 0.45,
+      });
+      burst(p, {
+        kind: 'brown',
+        type: 'bandpass',
+        freq: 700 * f,
+        toFreq: 320 * f,
+        q: 0.7,
+        level: 0.1,
+        attack: 0.15,
+        decay: 0.9,
+      });
+    },
+  },
+
+  /** A hen: two clipped bok-boks, bright and short, with no tail at all. */
+  chicken_cluck: {
+    bus: 'sfx',
+    gain: 0.3,
+    detune: 3,
+    reverb: 0.12,
+    tail: 0.4,
+    build(p) {
+      const f = p.rate;
+      for (const [at, freq, level] of [
+        [0, 900, 0.3],
+        [0.11, 760, 0.24],
+        [0.19, 660, 0.14],
+      ] as const) {
+        tone(p, {
+          at,
+          type: 'square',
+          freq: freq * f,
+          toFreq: freq * 0.55 * f,
+          glide: 0.05,
+          level,
+          attack: 0.004,
+          decay: 0.07,
+        });
+        burst(p, {
+          at,
+          type: 'bandpass',
+          freq: 2100 * f,
+          q: 3,
+          level: level * 0.45,
+          attack: 0.002,
+          decay: 0.05,
+        });
+      }
+    },
+  },
+
+  /** A cat: one vowel that opens and closes again - "me-ow" in one glide. */
+  cat_meow: {
+    bus: 'sfx',
+    gain: 0.3,
+    detune: 2.2,
+    reverb: 0.2,
+    tail: 0.8,
+    build(p) {
+      const f = p.rate;
+      const voice = tone(p, {
+        type: 'sawtooth',
+        freq: 560 * f,
+        toFreq: 470 * f,
+        glide: 0.42,
+        level: 0.26,
+        attack: 0.05,
+        hold: 0.14,
+        release: 0.3,
+      });
+      // Sweeping the formant down through the note is the "ow" half of the
+      // word; a fixed filter here gives a doorbell.
+      const mouth = p.biquad('bandpass', 1250 * f, 2.6);
+      mouth.frequency.setValueAtTime(1250 * f, p.t0 + 0.04);
+      mouth.frequency.exponentialRampToValueAtTime(620 * f, p.t0 + 0.5);
+      voice.disconnect();
+      voice.connect(mouth);
+      mouth.connect(p.out);
+      tone(p, {
+        at: 0.02,
+        type: 'triangle',
+        freq: 1120 * f,
+        toFreq: 900 * f,
+        glide: 0.35,
+        level: 0.06,
+        attack: 0.05,
+        decay: 0.35,
+      });
+    },
+  },
+
+  /** A crow: harsh, buzzy, and over almost before it starts. */
+  crow_caw: {
+    bus: 'sfx',
+    gain: 0.26,
+    detune: 2.5,
+    reverb: 0.26,
+    tail: 0.6,
+    build(p) {
+      const f = p.rate;
+      for (const [at, level] of [
+        [0, 0.28],
+        [0.24, 0.2],
+      ] as const) {
+        const rasp = tone(p, {
+          at,
+          type: 'sawtooth',
+          freq: 470 * f,
+          toFreq: 300 * f,
+          glide: 0.14,
+          level,
+          attack: 0.006,
+          decay: 0.16,
+        });
+        // A hard shaper is what separates a caw from a kazoo: the fold closure
+        // is abrupt, so the spectrum is all odd harmonics and grit. The gain in
+        // front is what pushes the saturation curve past its linear region -
+        // without it the shaper is an expensive wire.
+        const drive = p.gain(3.4);
+        const grit = p.shaper();
+        const band = p.biquad('bandpass', 1450 * f, 1.6);
+        rasp.disconnect();
+        rasp.connect(drive);
+        drive.connect(grit);
+        grit.connect(band);
+        band.connect(p.out);
+        burst(p, {
+          at,
+          type: 'bandpass',
+          freq: 2400 * f,
+          toFreq: 1300 * f,
+          q: 1.4,
+          level: level * 0.5,
+          attack: 0.004,
+          decay: 0.14,
+        });
+      }
     },
   },
 };
