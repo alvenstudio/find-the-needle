@@ -254,22 +254,26 @@ def build_hand(side, suffix):
 
 
 def build_hands():
-    """Both hands, toed in and tipped up.
+    """The player's hand: one right hand, toed in and tipped up.
 
-    At a 74-degree field of view a pair pointing straight down -Y sits at the
-    very edges of the frame and reads as two disconnected lumps. Angling them
-    puts them where a person's hands actually are when they are about to grab
-    something, and turns the backs of the gloves toward the camera where the
-    knuckle block and the finger gaps can be seen.
+    One, not two.  A pair pointing straight down -Y at a 74-degree field of
+    view sits at the very edges of the frame and reads as two disconnected
+    lumps rather than as a person's hands, and no first-person pose fixes it
+    while both are on screen -- the tools are all held one-handed, so the free
+    hand has nothing to do and nowhere convincing to be.  A single hand,
+    offset to the right of centre, is what the player's own hand looks like
+    when they reach for something, and it halves the model.
+
+    Angling it puts it where a hand actually is when it is about to grab, and
+    turns the back of the glove toward the camera where the knuckle block and
+    the finger gaps can be seen.  Its origin stays at the world origin, so the
+    hand sits at +x in model space and the viewmodel pose places it.
     """
-    parts = []
-    for side, suffix, roll in ((1, "R", -15.0), (-1, "L", 15.0)):
-        hand = join(build_hand(side, suffix), f"Hand{suffix}")
-        place(hand, rot=(math.radians(-14), 0.0, math.radians(roll)))
-        apply_transform(hand)
-        parts.append(hand)
+    hand = join(build_hand(1, "R"), "HandR")
+    place(hand, rot=(math.radians(-14), 0.0, math.radians(-15)))
+    apply_transform(hand)
 
-    hands = join(parts, "Hands")
+    hands = join([hand], "Hands")
     set_origin(hands, (0.0, 0.0, 0.0))
     report(hands)
     export_glb(hands, "hands")

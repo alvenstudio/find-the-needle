@@ -26,7 +26,11 @@ export interface ViewmodelPose {
 }
 
 const POSES: Record<string, ViewmodelPose> = {
-  hands: { position: new Vector3(0, -0.34, -0.42), rotation: new Euler(-0.16, 0, 0), scale: 1 },
+  // One right hand, held like a hand rather than aimed like a tool. The model
+  // sits at +x in its own space and the holder is spun half a turn, so the
+  // pose has to carry it back past the centre; the yaw turns the arm inward so
+  // the glove reads against the frame instead of hiding behind its own cuff.
+  hands: { position: new Vector3(0.27, -0.2, -0.4), rotation: new Euler(-0.44, 0.58, 0.16), scale: 1 },
   pitchfork: { position: new Vector3(0.19, -0.34, -0.52), rotation: new Euler(-0.5, 0.24, 0.16), scale: 0.92 },
   rake: { position: new Vector3(0.2, -0.36, -0.5), rotation: new Euler(-0.52, 0.26, 0.14), scale: 0.92 },
   leaf_blower: { position: new Vector3(0.24, -0.3, -0.46), rotation: new Euler(-0.1, 0.2, 0.06), scale: 0.95 },
