@@ -208,9 +208,28 @@ export class Input {
     this.actionReleased.emit(action);
   }
 
+  /**
+   * True when the key event belongs to something the player is typing into.
+   *
+   * Without this the dev console's command line would drive the character:
+   * typing `speed 3` walks you backwards and opens the shop. The check is on
+   * the event target rather than `document.activeElement` so it stays correct
+   * for events that are retargeted across a shadow boundary.
+   */
+  private static isTyping(event: KeyboardEvent): boolean {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return false;
+    return (
+      target.isContentEditable ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    );
+  }
+
   private attach(): void {
     this.listen(window, 'keydown', (event: KeyboardEvent) => {
-      if (event.repeat) return;
+      if (event.repeat || Input.isTyping(event)) return;
       const action = this.bindings[event.code];
       if (event.code === 'Tab' || (action && action !== 'pause')) event.preventDefault();
       if (action) this.press(action);
@@ -221,6 +240,7 @@ export class Input {
     });
 
     this.listen(window, 'keyup', (event: KeyboardEvent) => {
+      if (Input.isTyping(event)) return;
       const action = this.bindings[event.code];
       if (action) this.release(action);
     });

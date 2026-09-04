@@ -335,6 +335,30 @@ export class Run {
     if (this.hunchCooldown > 0) this.hunchCooldown = Math.max(0, this.hunchCooldown - dt);
   }
 
+  /**
+   * Hand the player the whole shop.
+   *
+   * A dev-console affordance rather than a gameplay path: it bypasses cash
+   * entirely, which is exactly why it lives here as one named method instead of
+   * as a loop over `buyUpgrade` in the console with a fake bank balance behind
+   * it. Emits the same signals a purchase would, so the HUD stays honest.
+   */
+  grantEverything(): void {
+    for (const definition of UPGRADES) this.upgrades[definition.id] = definition.maxLevel;
+    for (const tool of TOOLS) this.tools.add(tool.id);
+    this.hunchesUsed = 0;
+    this.hunchCooldown = 0;
+    this.invalidate();
+    for (const definition of UPGRADES) this.upgraded.emit(this.upgradeRow(definition));
+    this.equip(TOOLS[TOOLS.length - 1].id);
+  }
+
+  /** Put the Hunch charges back, without touching anything else. */
+  refillHunches(): void {
+    this.hunchesUsed = 0;
+    this.hunchCooldown = 0;
+  }
+
   // ------------------------------------------------------------ persistence
   snapshot(): RunSnapshot {
     return {

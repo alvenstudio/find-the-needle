@@ -87,6 +87,18 @@ export class Player {
   /** Set false while a menu owns the input. */
   controlEnabled = true;
 
+  /**
+   * Free-fly: no gravity, no collision, jump/crouch rise and fall.
+   *
+   * Owned by the dev console. It lives on the controller rather than in the
+   * console because everything downstream - the camera, the viewmodel, the
+   * step sounds - already reads the controller, and a second parallel
+   * "debug camera" would have to be kept in sync with all of it.
+   */
+  noclip = false;
+  /** Multiplier the dev console puts on top of the upgrade speed modifier. */
+  debugSpeed = 1;
+
   private readonly previousPosition = new Vector3();
   private readonly moveInput = new Vector2();
   private readonly lookDelta = { yaw: 0, pitch: 0 };
@@ -116,6 +128,14 @@ export class Player {
     this.yaw = yaw;
     this.pitch = 0;
     this.grounded = true;
+  }
+
+  /** Teleport with an explicit height, for the dev console and free-flight. */
+  teleportTo(x: number, y: number, z: number): void {
+    this.position.set(x, y, z);
+    this.previousPosition.copy(this.position);
+    this.velocity.set(0, 0, 0);
+    this.grounded = false;
   }
 
   /** Current eye position, unsmoothed. Used for gameplay queries. */
@@ -171,7 +191,11 @@ export class Player {
 
   private applyMovement(dt: number, wishLength: number): void {
     const tuning = this.tuning;
-    let target = tuning.walkSpeed * this.modifiers.speed * this.slopeSpeedScale;
+    if (this.noclip) {
+      this.applyFlight(wishLength);
+      return;
+    }
+    let target = tuning.walkSpeed * this.modifiers.speed * this.debugSpeed * this.slopeSpeedScale;
     if (this.sprinting) target *= tuning.sprintMultiplier;
     if (this.crouching && this.grounded) target *= tuning.crouchMultiplier;
     target *= clamp01(wishLength);
@@ -213,9 +237,49 @@ export class Player {
     if (this.velocity.y < -38) this.velocity.y = -38;
   }
 
+  /**
+   * Free-flight velocity: the wish direction taken straight from the look
+   * vector, plus jump/crouch on the vertical, with a hard stop when nothing is
+   * held so the camera parks exactly where it is pointed.
+   */
+  private applyFlight(wishLength: number): void {
+    const speed =
+      this.tuning.walkSpeed * this.debugSpeed * 2.4 * (this.sprinting ? 3 : 1) * clamp01(wishLength);
+    // Fly where you look, not where you stand: pitch is what makes a debug
+    // camera useful for inspecting a rooftop.
+    const pitchScale = Math.cos(this.pitch);
+    this.scratch.set(
+      this.wishDirection.x * pitchScale,
+      -Math.sin(this.pitch) * this.moveInput.y,
+      this.wishDirection.z * pitchScale,
+    );
+    if (this.scratch.lengthSq() > 1e-6) this.scratch.normalize();
+    this.velocity.set(this.scratch.x * speed, this.scratch.y * speed, this.scratch.z * speed);
+
+    const vertical = this.tuning.walkSpeed * this.debugSpeed * 2.4 * (this.sprinting ? 3 : 1);
+    if (this.controlEnabled) {
+      if (this.input.isDown('jump')) this.velocity.y += vertical;
+      if (this.crouching) this.velocity.y -= vertical;
+    }
+    this.jumpBuffered = 0;
+  }
+
   private integrate(dt: number): void {
     const tuning = this.tuning;
     const startY = this.position.y;
+
+    if (this.noclip) {
+      this.position.x += this.velocity.x * dt;
+      this.position.y += this.velocity.y * dt;
+      this.position.z += this.velocity.z * dt;
+      this.grounded = false;
+      this.slopeSpeedScale = 1;
+      this.distanceTravelled += Math.hypot(
+        this.position.x - this.previousPosition.x,
+        this.position.z - this.previousPosition.z,
+      );
+      return;
+    }
 
     this.position.x += this.velocity.x * dt;
     this.position.z += this.velocity.z * dt;

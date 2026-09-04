@@ -1,0 +1,217 @@
+/* =============================================================================
+   Admin console.
+
+   Deliberately unlike the rest of the game: dark, monospaced and cyan, so a
+   screenshot never leaves any doubt about which pixels are the game and which
+   are the debug tooling. Its styles live here rather than in the game's
+   stylesheet so the two can never drift into each other.
+   ============================================================================= */
+
+.devc {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  width: min(430px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(8, 12, 20, 0.95);
+  border: 2px solid rgba(108, 240, 255, 0.42);
+  border-radius: 12px;
+  color: #e6f2ff;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: auto;
+  z-index: 9999;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.devc[hidden] { display: none !important; }
+
+.devc__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  background: rgba(108, 240, 255, 0.08);
+  border-bottom: 1px solid rgba(108, 240, 255, 0.2);
+  font-weight: 700;
+  color: #6cf0ff;
+  letter-spacing: 0.4px;
+  cursor: grab;
+}
+
+.devc__head:active { cursor: grabbing; }
+
+.devc__hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: rgba(230, 242, 255, 0.5);
+}
+
+.devc__body {
+  overflow-y: auto;
+  padding: 6px 12px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(108, 240, 255, 0.35) transparent;
+}
+
+.devc__section {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(108, 240, 255, 0.14);
+}
+
+.devc__section:first-child { border-top: 0; padding-top: 2px; }
+
+.devc__title {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(108, 240, 255, 0.72);
+}
+
+.devc__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+
+.devc__grid--3 { grid-template-columns: repeat(3, 1fr); }
+.devc__grid--2 { grid-template-columns: repeat(2, 1fr); }
+
+.devc button {
+  appearance: none;
+  background: rgba(108, 240, 255, 0.08);
+  border: 1px solid rgba(108, 240, 255, 0.28);
+  color: #e6f2ff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s, border-color 0.1s, transform 0.06s;
+}
+
+.devc button:hover {
+  background: rgba(108, 240, 255, 0.2);
+  border-color: rgba(108, 240, 255, 0.6);
+}
+
+.devc button:active { transform: translateY(1px); }
+
+.devc button.is-on {
+  background: rgba(108, 240, 255, 0.3);
+  border-color: rgba(108, 240, 255, 0.85);
+  color: #fff;
+}
+
+.devc button.is-current {
+  background: rgba(255, 214, 102, 0.22);
+  border-color: rgba(255, 214, 102, 0.75);
+  color: #ffe89a;
+}
+
+.devc button.is-locked { opacity: 0.55; }
+
+.devc button.is-danger {
+  background: rgba(255, 96, 96, 0.12);
+  border-color: rgba(255, 96, 96, 0.4);
+  color: #ffb3b3;
+}
+
+.devc button.is-danger:hover {
+  background: rgba(255, 96, 96, 0.26);
+  border-color: rgba(255, 96, 96, 0.7);
+}
+
+.devc__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.devc__label { color: rgba(230, 242, 255, 0.68); }
+
+.devc__value {
+  font-weight: 700;
+  color: #ffe066;
+}
+
+.devc__readout {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px 12px;
+  font-size: 12px;
+  color: rgba(230, 242, 255, 0.8);
+}
+
+.devc__readout b {
+  color: #6cf0ff;
+  font-weight: 700;
+}
+
+.devc__foot {
+  border-top: 1px solid rgba(108, 240, 255, 0.2);
+  padding: 8px 12px 10px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.devc__input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(108, 240, 255, 0.25);
+  color: #e6f2ff;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  outline: none;
+}
+
+.devc__input:focus { border-color: rgba(108, 240, 255, 0.75); }
+
+.devc__log {
+  margin-top: 7px;
+  max-height: 96px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: rgba(230, 242, 255, 0.8);
+  white-space: pre-wrap;
+}
+
+.devc__log div { padding: 1px 0; }
+.devc__log .is-err { color: #ff9b9b; }
+.devc__log .is-ok { color: #9bffb5; }
+
+/* The always-on performance readout, shown with `perf` or the F3 key. */
+.devc-perf {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  padding: 6px 10px;
+  background: rgba(8, 12, 20, 0.72);
+  border: 1px solid rgba(108, 240, 255, 0.28);
+  border-radius: 8px;
+  color: #b7f3ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 9998;
+}
+
+.devc-perf[hidden] { display: none !important; }

@@ -173,6 +173,11 @@ export class Engine {
     this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
   }
 
+  /** Current adaptive-resolution factor, 0.62..1. Read by the dev overlay. */
+  get renderScale(): number {
+    return this.resolutionScale;
+  }
+
   get quality(): QualityTier {
     return this.tier;
   }

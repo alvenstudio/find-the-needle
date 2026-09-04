@@ -165,6 +165,30 @@ export class Meta {
     return { ok: true };
   }
 
+  /** Dev console: open every stack without paying for the keys. */
+  unlockAllTiers(): void {
+    if (this.save.unlockedTiers >= TIERS.length - 1) return;
+    this.save.unlockedTiers = TIERS.length - 1;
+    this.tierUnlocked.emit(TIERS[TIERS.length - 1]);
+  }
+
+  /** Dev console: every perk at its maximum level, free. */
+  grantAllPerks(): void {
+    for (const definition of PERKS) {
+      this.save.perks[definition.id] = definition.maxLevel;
+      this.perkBought.emit(this.perkRow(definition));
+    }
+  }
+
+  /** Dev console: fill the treasure collection. */
+  completeCollection(): void {
+    for (const id of Object.keys(TREASURE_BY_ID)) {
+      if (this.save.collection.includes(id)) continue;
+      this.save.collection.push(id);
+      this.collectionGrew.emit(id);
+    }
+  }
+
   // ------------------------------------------------------------ collection
   get collection(): readonly string[] {
     return this.save.collection;

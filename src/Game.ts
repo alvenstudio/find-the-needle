@@ -28,6 +28,7 @@ import { Meta, type RunSummary } from './gameplay/Meta';
 import { Player } from './gameplay/Player';
 import { Run, makeRunSeed } from './gameplay/Run';
 import { Viewmodel } from './gameplay/Viewmodel';
+import { DevConsole, type DevApi, type DevStats, type DevTierInfo, type TeleportTarget } from './ui/DevConsole';
 import { GameUi, type CrosshairState } from './ui/GameUi';
 import { CollisionWorld } from './world/Collision';
 import { Environment } from './world/Environment';
@@ -35,6 +36,7 @@ import { HayPile } from './world/HayPile';
 import { Livestock } from './world/Livestock';
 import { CRITICAL_ASSETS, DEFERRED_ASSETS } from './world/Manifest';
 import { SCENE_PALETTES, Scenery } from './world/Scenery';
+import { SKY_PRESETS, type SkyMood } from './world/Sky';
 import { Terrain } from './world/Terrain';
 
 /**
@@ -74,6 +76,7 @@ export class Game {
   private readonly save = new SaveManager();
   private readonly meta: Meta;
   private readonly ui: GameUi;
+  private readonly devConsole: DevConsole;
 
   private readonly collision = new CollisionWorld();
   private readonly terrain: Terrain;
@@ -166,6 +169,8 @@ export class Game {
       onSound: (name) => this.audio.play(name),
     });
 
+    this.devConsole = new DevConsole(uiRoot, this.devApi());
+
     this.applyAllSettings();
     this.engine.fixedUpdate.on((dt) => this.fixedUpdate(dt));
     this.engine.frameUpdate.on((dt) => this.frameUpdate(dt));
@@ -212,7 +217,8 @@ export class Game {
 
   /** Movement is enabled whenever the player is in the world and unblocked. */
   private syncControl(): void {
-    this.player.controlEnabled = this.state === 'playing' && !this.ui.modalOpen;
+    this.player.controlEnabled =
+      this.state === 'playing' && !this.ui.modalOpen && !this.devConsole.isOpen;
   }
 
   private beginPlaying(): void {
@@ -989,6 +995,7 @@ export class Game {
       this.particles.update(dt);
     }
     this.pile?.update(this.player.position);
+    this.devConsole.update();
 
     this.engine.camera.getWorldPosition(this.scratch);
     this.engine.camera.getWorldDirection(this.scratchB);
@@ -1031,6 +1038,190 @@ export class Game {
     this.ui.popup(x, y, text, kind);
   }
 
+  // ------------------------------------------------------------ dev console
+  /**
+   * Everything the admin console is allowed to touch, in one place.
+   *
+   * Written as a plain object of closures rather than by handing the console a
+   * `Game` because the boundary is the whole value of the thing: every cheat is
+   * one named verb here, and reading this method tells you the complete list of
+   * ways the console can move the game off its normal rails.
+   */
+  private devApi(): DevApi {
+    const game = this;
+    return {
+      tiers(): DevTierInfo[] {
+        return TIERS.map((tier, index) => ({
+          index,
+          id: tier.id,
+          name: tier.name,
+          unlocked: game.meta.isTierUnlocked(index),
+          current: tier.id === game.currentTier.id,
+        }));
+      },
+      travelTo(index) {
+        void game.travelTo(index);
+      },
+      unlockAllTiers() {
+        game.meta.unlockAllTiers();
+        game.save.flush();
+      },
+      addCash(amount) {
+        game.run?.addCash(amount);
+      },
+      setCash(amount) {
+        if (!game.run) return;
+        game.run.cash = Math.max(0, amount);
+        game.ui.setCash(game.run.cash);
+      },
+      addGems(amount) {
+        game.meta.addGems(Math.round(amount));
+        game.save.flush();
+      },
+      maxUpgrades() {
+        game.run?.grantEverything();
+        game.refreshDigStats();
+      },
+      unlockAllTools() {
+        game.run?.grantEverything();
+        game.refreshDigStats();
+      },
+      unlockAllPerks() {
+        game.meta.grantAllPerks();
+        game.save.flush();
+      },
+      refillHunches() {
+        game.run?.refillHunches();
+      },
+      setCleared(fraction) {
+        if (!game.pile || !game.run) return;
+        game.pile.restoreTo(fraction * game.pile.field.originalVolume);
+        game.run.removedVolume = game.pile.field.originalVolume - game.pile.field.remainingVolume;
+        game.refreshDigStats();
+      },
+      fillBag() {
+        if (!game.run || !game.dig) return;
+        game.run.carried = game.run.stats.capacity;
+      },
+      emptyBag() {
+        if (!game.run) return;
+        game.run.carried = 0;
+      },
+      revealNeedle() {
+        game.exposeBuried('needle');
+      },
+      findNeedle() {
+        game.finishRun(true);
+      },
+      collectTreasures() {
+        game.exposeBuried('treasure');
+      },
+      completeCollection() {
+        game.meta.completeCollection();
+        game.save.flush();
+      },
+      setNoclip(on) {
+        game.player.noclip = on;
+      },
+      setSpeed(multiplier) {
+        const clamped = Math.max(0.1, Math.min(40, multiplier));
+        game.player.debugSpeed = clamped;
+        return clamped;
+      },
+      teleport(where: TeleportTarget) {
+        game.devTeleport(where);
+      },
+      setQuality(tier) {
+        game.applySetting('quality', tier as (typeof game.save.state.settings)['quality']);
+      },
+      setMood(mood) {
+        game.environment.setMood(mood as SkyMood);
+      },
+      moods() {
+        return Object.keys(SKY_PRESETS);
+      },
+      stats(): DevStats {
+        const info = game.engine.renderer.info;
+        return {
+          fps: game.engine.fps,
+          drawCalls: info.render.calls,
+          triangles: info.render.triangles,
+          strawInstances: game.pile?.instanceCount ?? 0,
+          quality: game.engine.quality,
+          resolutionScale: game.engine.renderScale,
+          cleared: game.pile?.field.clearedFraction ?? 0,
+          cash: game.run?.cash ?? 0,
+          gems: game.meta.gems,
+          noclip: game.player.noclip,
+          position: {
+            x: game.player.position.x,
+            y: game.player.position.y,
+            z: game.player.position.z,
+          },
+        };
+      },
+      resetSave() {
+        game.resetSave();
+      },
+      setConsoleOpen(open) {
+        if (open) game.input.releaseLock();
+        game.syncControl();
+        if (!open && game.state === 'playing') void game.input.requestLock();
+      },
+    };
+  }
+
+  /** The dig system caches derived stats; call after any cheat that moves them. */
+  private refreshDigStats(): void {
+    if (this.dig && this.run && this.pile) {
+      this.dig.density = this.run.density(this.pile.field.originalVolume);
+    }
+  }
+
+  /** Dev console: put the player somewhere useful. */
+  private devTeleport(where: TeleportTarget): void {
+    if (where === 'spawn') {
+      const spawn = this.spawnPoint();
+      this.player.teleport(spawn.x, spawn.z, Math.atan2(spawn.x, spawn.z));
+      return;
+    }
+    if (where === 'stack') {
+      const top = this.pile?.surfaceHeightAt(0, 0) ?? 0;
+      this.player.teleportTo(0, top + 0.4, 0);
+      return;
+    }
+    const target = this.interactions.positionOf(where === 'sell' ? 'sell' : 'shop');
+    if (!target) return;
+    // Stand a stride outside the kiosk so the prompt is already up on arrival.
+    const outward = Math.hypot(target.x, target.z) || 1;
+    const x = target.x + (target.x / outward) * 1.6;
+    const z = target.z + (target.z / outward) * 1.6;
+    this.player.teleport(x, z, Math.atan2(target.x - x, target.z - z));
+  }
+
+  /**
+   * Dig straight down onto buried things so they surface.
+   *
+   * Cutting the hay away rather than teleporting the item is what makes this
+   * useful: the reveal runs through the same code path a real dig does, so it
+   * exercises the effect, the sound and the collection as well as the placement.
+   */
+  private exposeBuried(kind: 'needle' | 'treasure'): void {
+    const buried = this.buried;
+    const pile = this.pile;
+    if (!buried || !pile) return;
+    for (const item of buried.items) {
+      if (item.claimed || item.kind !== kind) continue;
+      const world = buried.worldPosition(item, this.scratch);
+      const surface = pile.surfaceHeightAt(world.x, world.z);
+      if (surface > world.y) pile.dig(world, 1.1, surface - world.y + 0.12);
+      if (kind === 'needle') {
+        this.player.teleportTo(world.x, Math.max(surface, world.y) + 1.9, world.z);
+      }
+    }
+    this.refreshDigStats();
+  }
+
   // ---------------------------------------------------------------- teardown
   dispose(): void {
     this.persist();
@@ -1047,6 +1238,7 @@ export class Game {
     this.assets.dispose();
     this.audio.dispose();
     this.flash.dispose();
+    this.devConsole.dispose();
     this.ui.dispose();
     this.input.dispose();
     this.engine.dispose();
