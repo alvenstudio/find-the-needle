@@ -197,7 +197,7 @@ export class Game {
   // ------------------------------------------------------------------ boot
   async boot(): Promise<void> {
     this.assets.progress.on((progress) => {
-      this.ui.setLoadingProgress(progress.fraction * 0.75, 'Baling the hay…');
+      this.ui.setLoadingProgress(progress.fraction * 0.75, 'Вяжем сено…');
     });
     await this.assets.loadAll(CRITICAL_ASSETS);
 
@@ -214,7 +214,7 @@ export class Game {
     this.openStack(TIERS[tierIndex], stored?.seed ?? makeRunSeed(TIERS[tierIndex].id, 0, Date.now()));
     if (stored) this.run?.restore(stored);
 
-    this.ui.setLoadingProgress(0.8, 'Waking the cow…');
+    this.ui.setLoadingProgress(0.8, 'Будим корову…');
     this.engine.start();
 
     // The rest of the library streams in behind the title screen: the player is
@@ -244,7 +244,7 @@ export class Game {
     this.syncControl();
     if (this.meta.stats.runs === 0 && this.meta.stats.pulls === 0) {
       this.tutorialStep = 0;
-      this.ui.toast('Walk up to the haystack and hold the left mouse button.', 'info', '🌾');
+      this.ui.toast('Подойди к стогу и зажми левую кнопку мыши.', 'info', '🌾');
     }
     void this.audio.unlock().then(() => {
       this.audio.setAmbience(this.currentTier.mood);
@@ -493,7 +493,7 @@ export class Game {
     dig.dug.on(() => {
       if (this.tutorialStep !== 0) return;
       this.tutorialStep = 1;
-      this.ui.toast('Fill your bag, then take it to the cow and press E.', 'info', '🐄');
+      this.ui.toast('Набери полный мешок, отнеси корове и нажми E.', 'info', '🐄');
     });
 
     dig.backpackFull.on(() => {
@@ -501,13 +501,13 @@ export class Game {
       // a full red meter, and a stack of identical toasts is just noise.
       if (this.elapsed - this.lastBagWarning < 6) return;
       this.lastBagWarning = this.elapsed;
-      this.ui.toast('Bag full — take it to the cow', 'bad', '🎒');
+      this.ui.toast('Мешок полон — неси корове', 'bad', '🎒');
       this.audio.play('denied', { volume: 0.5 });
     });
 
     dig.pileCleared.on(() => {
       this.buried?.collectAllExposed();
-      this.ui.toast('Stack cleared!', 'good', '🌾');
+      this.ui.toast('Стог разобран!', 'good', '🌾');
       if (this.pile) this.particles?.ring(this.pile.group.position, this.currentTier.radius, 48, '#ffe08a');
     });
   }
@@ -538,7 +538,7 @@ export class Game {
       this.runTreasureGems += definition.gems;
       this.particles?.sparkle(worldPosition, 26, RARITY_COLORS[definition.rarity], 3);
       this.ui.toast(`${definition.name} — ${definition.flavour}`, 'good', '✨');
-      this.ui.banner(`${definition.name}!  +$${formatShort(cash)}`, 'gem');
+      this.ui.banner(`${definition.name}!  +${formatShort(cash)}`, 'gem');
       this.audio.play('treasure', { position: worldPosition });
       this.screen.shake(0.12, 6);
       this.save.touch();
@@ -632,11 +632,11 @@ export class Game {
     this.interactions.focusChanged.on((item) => this.ui.setPrompt(this.promptFor(item)));
 
     this.meta.questCompleted.on((quest) => {
-      this.ui.toast(`Job done: ${quest.name}`, 'good', '📋');
+      this.ui.toast(`Задание выполнено: ${quest.name}`, 'good', '📋');
       this.audio.play('quest_complete');
     });
     this.meta.tierUnlocked.on((tier) => {
-      this.ui.toast(`${tier.name} unlocked!`, 'good', '🔓');
+      this.ui.toast(`Открыт стог «${tier.name}»!`, 'good', '🔓');
       this.audio.play('tier_unlock');
     });
     this.meta.gemsChanged.on((gems) => this.ui.setGems(gems));
@@ -651,7 +651,7 @@ export class Game {
       const carried = this.run.carried;
       return {
         key: 'E',
-        label: carried > 0 ? `Sell ${formatShort(carried)} hay` : 'Nothing to sell',
+        label: carried > 0 ? `Продать сено (${formatShort(carried)})` : 'Продавать нечего',
         blocked: carried <= 0,
       };
     }
@@ -696,11 +696,11 @@ export class Game {
     this.meta.recordSale(result.straws, result.cash);
     if (this.tutorialStep === 1) {
       this.tutorialStep = 2;
-      this.ui.toast('Press B to spend it. Everything resets when you find the needle.', 'info', '🛒');
+      this.ui.toast('Нажми B, чтобы потратить. С иголкой всё обнулится.', 'info', '🛒');
     } else if (this.tutorialStep === 2) {
       this.tutorialStep = -1;
     }
-    this.ui.banner(`Sold ${formatShort(result.straws)} hay for $${formatShort(result.cash)}`, 'good');
+    this.ui.banner(`Продано сена: ${formatShort(result.straws)} за ${formatShort(result.cash)} монет`, 'good');
     this.audio.play('sell');
     const sellPoint = this.interactions.positionOf('sell');
     if (sellPoint && this.particles) {
@@ -722,7 +722,7 @@ export class Game {
     this.run.useHunch();
     this.hunchTimer = HUNCH.duration;
     this.hunchTrail = 0;
-    this.ui.toast('A hunch: that way.', 'good', '🔮');
+    this.ui.toast('Чутьё говорит: туда.', 'good', '🔮');
     this.audio.play('detector_ping', { rate: 1.4 });
     this.flash.flash('#8fd8ff', 0.2, 3);
   }
@@ -767,7 +767,7 @@ export class Game {
     if (!this.run) return;
     if (this.run.buyTool(id).ok) {
       this.audio.play('purchase');
-      this.ui.toast(`${TOOL_BY_ID[id].name} unlocked`, 'good', '🛠');
+      this.ui.toast(`Куплено: ${TOOL_BY_ID[id].name}`, 'good', '🛠');
       this.ui.refreshOpenModal();
       this.save.touch();
     }

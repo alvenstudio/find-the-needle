@@ -39,14 +39,14 @@ async function main(): Promise<void> {
   const canvas = document.getElementById('viewport');
   const uiRoot = document.getElementById('ui');
   if (!(canvas instanceof HTMLCanvasElement) || !uiRoot) {
-    fail('Something is missing', 'The page did not load correctly. Try a refresh.');
+    fail('Чего-то не хватает', 'Страница загрузилась не полностью. Попробуй обновить.');
     return;
   }
 
   if (!supportsWebGL2(canvas)) {
     fail(
-      'This browser cannot run Find the Needle',
-      'The game needs WebGL 2. Try a recent Chrome, Edge, Firefox or Safari, and make sure hardware acceleration is switched on.',
+      'Этот браузер не потянет «Найди иголку»',
+      'Игре нужен WebGL 2. Попробуй свежий Chrome, Edge, Firefox или Safari и включи аппаратное ускорение.',
     );
     return;
   }
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     await game.boot();
   } catch (error) {
     console.error('[boot] failed', error);
-    fail('The farm would not load', error instanceof Error ? error.message : String(error));
+    fail('Ферма не загрузилась', error instanceof Error ? error.message : String(error));
   }
 }
 

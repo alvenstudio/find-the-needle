@@ -128,21 +128,21 @@ const UI_REFERENCE_HEIGHT = 860;
 
 /** Labels on the action rail, in one place so they read as a set. */
 const RAIL_LABELS = {
-  shop: 'Shop',
-  quests: 'Jobs',
-  records: 'Records',
-  travel: 'Travel',
+  shop: 'Лавка',
+  quests: 'Задания',
+  records: 'Рекорды',
+  travel: 'Стога',
 } as const;
 
 const LOADING_TIPS: readonly string[] = [
-  'Cash and upgrades belong to one haystack. Gems are forever.',
-  'A full bag wastes every swing. Watch the green bar.',
-  'Golden bundles pay eight times over. Keep moving around the stack.',
-  'The needle sits deeper on the bigger stacks. Clear wide, not just deep.',
-  'Sell at the cow. Haggle makes every load worth more.',
-  'Buried oddities join your collection permanently.',
-  'A Hunch points toward the needle. It only tells you which half to dig.',
-  'Clearing every last straw pays a bonus on top of the needle.',
+  'Деньги и улучшения живут один стог. Кристаллы — навсегда.',
+  'Полный мешок обнуляет каждый рывок. Следи за зелёной полосой.',
+  'Золотая охапка платит в восемь раз больше. Обходи стог кругом.',
+  'В больших стогах иголка глубже. Копай вширь, а не только вглубь.',
+  'Продавай корове. Торг делает каждую ходку дороже.',
+  'Найденные диковины навсегда остаются в коллекции.',
+  'Чутьё указывает в сторону иголки — но только в какую половину копать.',
+  'За последнюю соломину дают премию сверх иголки.',
 ];
 
 const TIP_INTERVAL_MS = 4200;
@@ -197,11 +197,11 @@ const QUEST_ICONS: Readonly<Record<string, string>> = {
 };
 
 const QUALITY_OPTIONS: readonly { value: string; label: string }[] = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'ultra', label: 'Ultra' },
-  { value: 'auto', label: 'Auto' },
+  { value: 'low', label: 'Низкое' },
+  { value: 'medium', label: 'Среднее' },
+  { value: 'high', label: 'Высокое' },
+  { value: 'ultra', label: 'Ультра' },
+  { value: 'auto', label: 'Авто' },
 ];
 
 /** Which dialog is currently mounted, so `refreshOpenModal` knows what to redraw. */
@@ -226,7 +226,7 @@ function statText(unit: string, value: number): string {
     case 'x':
       return `${trimNumber(value)}x`;
     case 'm':
-      return `${trimNumber(value)} m`;
+      return `${trimNumber(value)} м`;
     case '%':
       return `${Math.round(value * 100)}%`;
     default:
@@ -236,7 +236,7 @@ function statText(unit: string, value: number): string {
 
 /** Cash for a shop row: short-scale, because late tiers deal in millions. */
 function cashText(value: number): string {
-  return Number.isFinite(value) ? formatShort(value) : 'MAX';
+  return Number.isFinite(value) ? formatShort(value) : 'МАКС';
 }
 
 /**
@@ -411,20 +411,20 @@ export class GameUi {
     this.viewHeight = window.innerHeight;
 
     /* --- HUD ------------------------------------------------------------ */
-    this.bagMeter = meter({ label: 'Hay', className: 'meter--backpack' });
+    this.bagMeter = meter({ label: 'Сено', className: 'meter--backpack' });
     this.cashChip = chip({ icon: '💰', className: 'chip--money' });
     this.gemChip = chip({ icon: '💎', className: 'chip--gem' });
 
-    this.stackMeter = hideMeterHead(meter({ label: 'Stack', className: 'meter--stack meter--lg' }));
+    this.stackMeter = hideMeterHead(meter({ label: 'Стог', className: 'meter--stack meter--lg' }));
     this.stackPct = el('div.u-title.u-num', { textContent: '0%' });
     this.stackName = el('div.u-muted', { textContent: '' });
 
     this.toolIcon = el('span.hud__tool-icon', { textContent: '✋', attrs: { 'aria-hidden': 'true' } });
-    this.toolName = el('span', { textContent: 'Bare Hands' });
+    this.toolName = el('span', { textContent: 'Голые руки' });
     this.toolCount = el('span.u-dim.u-num', { textContent: '1/1' });
 
     this.hunchCount = el('span.u-num', { textContent: 'x0' });
-    this.hunchMeter = hideMeterHead(meter({ label: 'Hunch' }));
+    this.hunchMeter = hideMeterHead(meter({ label: 'Чутьё' }));
     this.hunchPanel = el('div.hud__panel', undefined, [
       el('div.u-row', undefined, [
         el('span.hud__tool-icon', { textContent: '🔮', attrs: { 'aria-hidden': 'true' } }),
@@ -463,13 +463,13 @@ export class GameUi {
     this.loadingTip = el('p.loading__tip', { textContent: LOADING_TIPS[0] ?? '' });
     this.loading = this.buildLoading();
 
-    this.titlePlay = button('Play', () => this.onPlay(), 'primary');
+    this.titlePlay = button('Играть', () => this.onPlay(), 'primary');
     this.titleStats = el('div.u-row');
-    this.titleFoot = el('p.title__foot', { textContent: 'Made with hay, sunshine and three.js.' });
+    this.titleFoot = el('p.title__foot', { textContent: 'Сделано из сена, солнца и three.js.' });
     this.title = this.buildTitle();
 
     this.pauseStats = el('div.pause__stats');
-    this.pauseTravel = button('Travel', () => this.travelFromPause(), 'ghost');
+    this.pauseTravel = button('К другому стогу', () => this.travelFromPause(), 'ghost');
     this.pause = this.buildPause();
 
     this.celebrateCard = el('div.panel.celebrate__card');
@@ -571,7 +571,7 @@ export class GameUi {
     return el('div.loading', undefined, [
       el('div.loading__card', undefined, [
         el('div.loading__needle', { textContent: '🪡', attrs: { 'aria-hidden': 'true' } }),
-        el('h1.loading__logo', { textContent: 'Find the Needle' }),
+        el('h1.loading__logo', { textContent: 'Найди иголку' }),
         el('div.loading__bar', { attrs: { role: 'progressbar', 'aria-label': 'Loading' } }, this.loadingFill),
         this.loadingPct,
         this.loadingTip,
@@ -581,16 +581,16 @@ export class GameUi {
 
   private buildTitle(): HTMLElement {
     const logo = el('h1.title__logo.u-outlined');
-    logo.append('Find the', el('em', { textContent: 'Needle' }));
+    logo.append('Найди', el('em', { textContent: 'иголку' }));
 
     return el('div.title', undefined, [
       logo,
-      el('p.title__tagline', { textContent: 'One needle. A million straws.' }),
+      el('p.title__tagline', { textContent: 'Одна иголка. Миллион соломин.' }),
       this.titleStats,
       el('div.title__menu', undefined, [
         this.titlePlay,
-        button('Settings', () => this.cb.onOpenSettings(), 'ghost'),
-        button('Credits', () => this.toggleCredits(), 'ghost'),
+        button('Настройки', () => this.cb.onOpenSettings(), 'ghost'),
+        button('Об игре', () => this.toggleCredits(), 'ghost'),
       ]),
       this.titleFoot,
     ]);
@@ -599,12 +599,12 @@ export class GameUi {
   private buildPause(): HTMLElement {
     return el('div.pause', undefined, [
       el('div.panel.pause__menu', undefined, [
-        el('h2.pause__title', { textContent: 'Paused' }),
+        el('h2.pause__title', { textContent: 'Пауза' }),
         el('div.pause__actions', undefined, [
-          button('Resume', () => this.resume(), 'primary'),
-          button('Settings', () => this.cb.onOpenSettings(), 'ghost'),
+          button('Продолжить', () => this.resume(), 'primary'),
+          button('Настройки', () => this.cb.onOpenSettings(), 'ghost'),
           this.pauseTravel,
-          button('Quit to title', () => this.quitToTitle(true), 'ghost'),
+          button('В главное меню', () => this.quitToTitle(true), 'ghost'),
         ]),
         this.pauseStats,
       ]),
@@ -654,7 +654,7 @@ export class GameUi {
     this.titleGems = info.gems;
     this.titleNeedles = info.needles;
 
-    setText(this.titlePlay, info.hasRun ? 'Continue' : 'Play');
+    setText(this.titlePlay, info.hasRun ? 'Продолжить' : 'Играть');
 
     clear(this.titleStats);
     if (info.gems > 0) this.titleStats.appendChild(badge('💎', formatShort(info.gems), 'chip--gem'));
@@ -681,10 +681,10 @@ export class GameUi {
   showPause(info: { tier: string; elapsed: number; cleared: number; gems: number }): void {
     clear(this.pauseStats);
     this.pauseStats.append(
-      statLine('Stack', info.tier),
-      statLine('Time', formatClock(info.elapsed)),
-      statLine('Cleared', `${(info.cleared * 100).toFixed(1)}%`),
-      statLine('Gems', formatShort(info.gems)),
+      statLine('Стог', info.tier),
+      statLine('Время', formatClock(info.elapsed)),
+      statLine('Разобрано', `${(info.cleared * 100).toFixed(1)}%`),
+      statLine('Кристаллы', formatShort(info.gems)),
     );
 
     // The travel dialog needs a `Meta`, which only arrives when the game opens
@@ -716,7 +716,7 @@ export class GameUi {
     const nextIndex = index + 1;
 
     const subtitle = summary.unlockedTier
-      ? `${summary.tier.name} - ${summary.unlockedTier.name} is open!`
+      ? `${summary.tier.name} пройден — открыт «${summary.unlockedTier.name}»!`
       : summary.tier.name;
 
     const timeValue = el('div.celebrate__stat-value', {
@@ -727,19 +727,19 @@ export class GameUi {
     });
 
     const stats = el('div.celebrate__stats', undefined, [
-      this.celebrateStat('Hay pulled', el('div.celebrate__stat-value', { textContent: formatShort(summary.hayPulled) })),
-      this.celebrateStat(summary.newBestTime ? 'New best time' : 'Time', timeValue),
+      this.celebrateStat('Вытянуто сена', el('div.celebrate__stat-value', { textContent: formatShort(summary.hayPulled) })),
+      this.celebrateStat(summary.newBestTime ? 'Новый рекорд' : 'Время', timeValue),
       this.celebrateStat(
-        'Cleared',
+        'Разобрано',
         el('div.celebrate__stat-value', { textContent: `${(summary.clearedFraction * 100).toFixed(1)}%` }),
       ),
     ]);
 
     const breakdown = el('div.celebrate__stats', undefined, [
-      this.gemStat('Needle', summary.gemsFromNeedle, 0),
-      this.gemStat('Full clear', summary.gemsFromClear, 1),
-      this.gemStat('Time', summary.gemsFromTime, 2),
-      this.gemStat('Oddities', summary.gemsFromTreasures, 3),
+      this.gemStat('Иголка', summary.gemsFromNeedle, 0),
+      this.gemStat('Полный разбор', summary.gemsFromClear, 1),
+      this.gemStat('За время', summary.gemsFromTime, 2),
+      this.gemStat('Находки', summary.gemsFromTreasures, 3),
     ]);
 
     const totalChip = chip({ icon: '💎', className: 'chip--gem' });
@@ -751,7 +751,7 @@ export class GameUi {
     const actions = el('div.celebrate__actions');
     if (options.canAdvance && nextIndex < TIERS.length) {
       actions.appendChild(
-        button('Next stack', () => {
+        button('Следующий стог', () => {
           this.hideSummary();
           this.showHud();
           this.cb.onPickTier(nextIndex);
@@ -759,20 +759,20 @@ export class GameUi {
       );
     }
     actions.append(
-      button('Play again', () => {
+      button('Ещё раз', () => {
         this.hideSummary();
         this.showHud();
         this.cb.onReplayStack();
       }, 'buy'),
-      button('Back to the farm', () => this.quitToTitle(false), 'ghost'),
+      button('На ферму', () => this.quitToTitle(false), 'ghost'),
     );
 
     this.celebrateCard.append(
       el('div.celebrate__needle', { textContent: '🪡', attrs: { 'aria-hidden': 'true' } }),
-      el('h2.celebrate__title', { textContent: summary.foundNeedle ? 'NEEDLE FOUND!' : 'STACK CLEARED!' }),
+      el('h2.celebrate__title', { textContent: summary.foundNeedle ? 'ИГОЛКА НАЙДЕНА!' : 'СТОГ РАЗОБРАН!' }),
       el('p.celebrate__sub', { textContent: subtitle }),
       stats,
-      el('div.u-label', { textContent: 'Gems earned' }),
+      el('div.u-label', { textContent: 'Кристаллов' }),
       breakdown,
       el('div.u-row', undefined, totalChip.root),
       actions,
@@ -946,7 +946,7 @@ export class GameUi {
     this.lastFpsKey = key;
     this.fpsPanel.hidden = !visible;
     if (!visible) return;
-    setText(this.fpsText, extra === undefined ? `${Math.round(fps)} fps` : `${Math.round(fps)} fps  ${extra}`);
+    setText(this.fpsText, extra === undefined ? `${Math.round(fps)} кадр/с` : `${Math.round(fps)} кадр/с  ${extra}`);
   }
 
   /* ============================================================== feedback */
@@ -981,34 +981,34 @@ export class GameUi {
 
   openShop(run: Run): void {
     this.run = run;
-    this.present('shop', 'Farm Supply', true, () => this.renderShop());
+    this.present('shop', 'Лавка', true, () => this.renderShop());
   }
 
   openPerks(meta: Meta): void {
     this.meta = meta;
-    this.present('perks', 'Permanent Perks', false, () => this.renderPerks());
+    this.present('perks', 'Постоянные бонусы', false, () => this.renderPerks());
   }
 
   openQuests(meta: Meta): void {
     this.meta = meta;
-    this.present('quests', "Today's Jobs", false, () => this.renderQuests());
+    this.present('quests', 'Задания на сегодня', false, () => this.renderQuests());
   }
 
   openRecords(meta: Meta): void {
     this.meta = meta;
-    this.present('records', 'Records', true, () => this.renderRecords());
+    this.present('records', 'Рекорды', true, () => this.renderRecords());
   }
 
   openTravel(meta: Meta, currentTier: number): void {
     this.meta = meta;
     this.travelIndex = currentTier;
-    this.present('travel', 'Where to?', true, () => this.renderTravel());
+    this.present('travel', 'Куда отправимся?', true, () => this.renderTravel());
   }
 
   openSettings(settings: SaveData['settings']): void {
     this.settings = settings;
     this.resetArmed = false;
-    this.present('settings', 'Settings', false, () => this.renderSettings());
+    this.present('settings', 'Настройки', false, () => this.renderSettings());
   }
 
   /**
@@ -1099,8 +1099,8 @@ export class GameUi {
     let live = false;
     const bar = tabs(
       [
-        { id: 'upgrades', label: 'Upgrades' },
-        { id: 'tools', label: 'Tools' },
+        { id: 'upgrades', label: 'Улучшения' },
+        { id: 'tools', label: 'Инструменты' },
       ],
       (id) => {
         if (!live) return;
@@ -1121,7 +1121,7 @@ export class GameUi {
 
     this.modal.body.append(
       el('p.settings__hint', {
-        textContent: 'Upgrades and tools last for this haystack only. Spend it all.',
+        textContent: 'Улучшения и инструменты живут только этот стог. Трать всё.',
       }),
       list,
     );
@@ -1135,7 +1135,7 @@ export class GameUi {
       ? statText(definition.unit, row.value)
       : `${statText(definition.unit, row.value)} → ${statText(definition.unit, row.next)}`;
 
-    const buy = button('Buy', () => this.buyUpgrade(definition.id, false), 'buy');
+    const buy = button('Купить', () => this.buyUpgrade(definition.id, false), 'buy');
     buy.classList.add('btn--sm');
     buy.disabled = row.maxed || !row.affordable;
 
@@ -1145,7 +1145,7 @@ export class GameUi {
     ]);
     if (!row.maxed) {
       // "Max" only earns its place while there are levels left to sweep up.
-      const max = button('Max', () => this.buyUpgrade(definition.id, true), 'primary');
+      const max = button('Всё', () => this.buyUpgrade(definition.id, true), 'primary');
       max.classList.add('btn--sm');
       max.disabled = !row.affordable;
       buys.appendChild(max);
@@ -1175,24 +1175,24 @@ export class GameUi {
 
     // Radius / bite / rhythm, in that order: it is the shape of the hole, how
     // deep it goes and how often you get to make one.
-    const bite = tool.continuous ? `${trimNumber(tool.depth)} m/s` : `${trimNumber(tool.depth)} m/pull`;
-    const rhythm = tool.continuous ? 'continuous' : `${trimNumber(tool.cooldown)} s`;
-    const stats = `⌀ ${trimNumber(tool.radius * 2)} m  ·  ${bite}  ·  ${rhythm}`;
+    const bite = tool.continuous ? `${trimNumber(tool.depth)} м/с` : `${trimNumber(tool.depth)} м за рывок`;
+    const rhythm = tool.continuous ? 'без пауз' : `${trimNumber(tool.cooldown)} с`;
+    const stats = `⌀ ${trimNumber(tool.radius * 2)} м  ·  ${bite}  ·  ${rhythm}`;
 
     const buys = el('div.shop-row__buy');
     if (!row.owned) {
       buys.appendChild(costTag('💰', cashText(tool.price)));
-      const buy = button('Buy', () => this.buyTool(tool.id), 'buy');
+      const buy = button('Купить', () => this.buyTool(tool.id), 'buy');
       buy.classList.add('btn--sm');
       buy.disabled = !row.affordable;
       buys.appendChild(buy);
     } else if (row.equipped) {
-      const equipped = button('Equipped', () => undefined, 'ghost');
+      const equipped = button('В руках', () => undefined, 'ghost');
       equipped.classList.add('btn--sm');
       equipped.disabled = true;
       buys.appendChild(equipped);
     } else {
-      const equip = button('Equip', () => this.equipTool(tool.id), 'primary');
+      const equip = button('Взять', () => this.equipTool(tool.id), 'primary');
       equip.classList.add('btn--sm');
       buys.appendChild(equip);
     }
@@ -1222,7 +1222,7 @@ export class GameUi {
       el('div.u-row', undefined, [
         badge('💎', formatShort(meta.gems), 'chip--gem'),
         el('p.settings__hint', {
-          textContent: 'Perks are permanent. They apply to every run you will ever play.',
+          textContent: 'Бонусы постоянные. Они работают в каждом будущем заходе.',
         }),
       ]),
       list,
@@ -1234,7 +1234,7 @@ export class GameUi {
     const state = row.maxed ? 'shop-row--maxed' : row.affordable ? 'shop-row--afford' : 'shop-row--poor';
 
     const buys = el('div.shop-row__buy', undefined, costTag('💎', row.maxed ? 'MAX' : cashText(row.cost)));
-    const buy = button(row.maxed ? 'Maxed' : 'Buy', () => this.buyPerk(perk.id), 'buy');
+    const buy = button(row.maxed ? 'Максимум' : 'Купить', () => this.buyPerk(perk.id), 'buy');
     buy.classList.add('btn--sm');
     buy.disabled = row.maxed || !row.affordable;
     buys.appendChild(buy);
@@ -1244,7 +1244,7 @@ export class GameUi {
       el('div.shop-row__main', undefined, [
         el('div.shop-row__name', { textContent: perk.name }),
         el('div.shop-row__blurb', { textContent: perk.blurb }),
-        el('div.shop-row__stat', { textContent: `Level ${row.level} / ${perk.maxLevel}` }),
+        el('div.shop-row__stat', { textContent: `Уровень ${row.level} / ${perk.maxLevel}` }),
         pipStrip(row.level, perk.maxLevel),
       ]),
       buys,
@@ -1262,7 +1262,7 @@ export class GameUi {
     for (const quest of meta.activeQuests) list.appendChild(this.questRow(quest));
 
     this.modal.body.append(
-      el('p.settings__hint', { textContent: 'Three jobs a day. They reset at midnight, wherever you are.' }),
+      el('p.settings__hint', { textContent: 'Три задания в день. Обновляются в полночь по твоему времени.' }),
       list,
     );
   }
@@ -1274,11 +1274,11 @@ export class GameUi {
 
     const reward = el('div.quest__reward', undefined, badge('💎', String(quest.gemReward), 'chip--gem chip--sm'));
     if (claimable) {
-      const claim = button('Claim', () => this.claimQuest(quest.id), 'buy');
+      const claim = button('Забрать', () => this.claimQuest(quest.id), 'buy');
       claim.classList.add('btn--sm');
       reward.appendChild(claim);
     } else if (quest.claimed) {
-      reward.appendChild(el('span.u-label', { textContent: 'Claimed' }));
+      reward.appendChild(el('span.u-label', { textContent: 'Получено' }));
     }
 
     const classes = [quest.completed ? 'quest--done' : '', claimable ? 'quest--claimable' : '']
@@ -1306,8 +1306,8 @@ export class GameUi {
     let live = false;
     const bar = tabs(
       [
-        { id: 'records', label: 'Records' },
-        { id: 'collection', label: 'Collection' },
+        { id: 'records', label: 'Рекорды' },
+        { id: 'collection', label: 'Коллекция' },
       ],
       (id) => {
         if (!live) return;
@@ -1325,7 +1325,7 @@ export class GameUi {
       for (const treasure of TREASURES) grid.appendChild(this.collectionCell(treasure, found.has(treasure.id)));
       this.modal.body.append(
         el('p.settings__hint', {
-          textContent: `${found.size} of ${TREASURES.length} oddities dug up.`,
+          textContent: `Откопано находок: ${found.size} из ${TREASURES.length}.`,
         }),
         grid,
       );
@@ -1333,13 +1333,13 @@ export class GameUi {
     }
 
     const lifetime = el('div.settings__group', undefined, [
-      el('div.settings__group-title', { textContent: 'Lifetime' }),
-      statLine('Runs', formatExact(meta.stats.runs)),
-      statLine('Needles found', formatExact(meta.stats.needlesFound)),
-      statLine('Hay pulled', formatShort(meta.stats.hayPulled)),
-      statLine('Golden bundles', formatExact(meta.stats.goldenPulled)),
-      statLine('Oddities dug up', formatExact(meta.stats.treasuresFound)),
-      statLine('Gems earned', formatShort(meta.stats.gemsEarned)),
+      el('div.settings__group-title', { textContent: 'За всё время' }),
+      statLine('Заходов', formatExact(meta.stats.runs)),
+      statLine('Найдено иголок', formatExact(meta.stats.needlesFound)),
+      statLine('Вытянуто сена', formatShort(meta.stats.hayPulled)),
+      statLine('Золотых охапок', formatExact(meta.stats.goldenPulled)),
+      statLine('Откопано находок', formatExact(meta.stats.treasuresFound)),
+      statLine('Заработано кристаллов', formatShort(meta.stats.gemsEarned)),
     ]);
 
     const list = el('div.shop-list');
@@ -1351,13 +1351,13 @@ export class GameUi {
           el('div.shop-row__icon', { textContent: '🌾', attrs: { 'aria-hidden': 'true' } }),
           el('div.shop-row__main', undefined, [
             el('div.shop-row__name', { textContent: tier.name }),
-            el('div.shop-row__blurb', { textContent: `${formatShort(tier.straws)} straws` }),
+            el('div.shop-row__blurb', { textContent: `${formatShort(tier.straws)} соломин` }),
             el('div.shop-row__stat', {
-              textContent: `Best clear ${(clear_ * 100).toFixed(1)}%`,
+              textContent: `Лучший разбор: ${(clear_ * 100).toFixed(1)}%`,
             }),
           ]),
           el('div.shop-row__buy', undefined, [
-            el('div.celebrate__stat-label', { textContent: 'Best time' }),
+            el('div.celebrate__stat-label', { textContent: 'Лучшее время' }),
             el('div.shop-row__cost', undefined, el('span', { textContent: best === null ? '—' : formatClock(best) })),
           ]),
         ]),
@@ -1384,7 +1384,7 @@ export class GameUi {
       'div.cell',
       {
         className: classes,
-        title: found ? `${treasure.name} - ${treasure.flavour}` : 'Not found yet',
+        title: found ? `${treasure.name} — ${treasure.flavour}` : 'Ещё не найдено',
       },
       [
         el('div.cell__icon', { textContent: TREASURE_ICONS[treasure.id] ?? '❔', attrs: { 'aria-hidden': 'true' } }),
@@ -1406,7 +1406,7 @@ export class GameUi {
     this.modal.body.append(
       el('div.u-row', undefined, [
         badge('💎', formatShort(meta.gems), 'chip--gem'),
-        el('p.settings__hint', { textContent: 'Travelling starts a fresh run. Cash and upgrades stay behind.' }),
+        el('p.settings__hint', { textContent: 'Переход начинает новый заход. Деньги и улучшения остаются здесь.' }),
       ]),
       list,
     );
@@ -1422,12 +1422,12 @@ export class GameUi {
 
     const buys = el('div.shop-row__buy');
     if (unlocked) {
-      const go = button(current ? 'Here' : 'Go', () => this.pickTier(index), 'primary');
+      const go = button(current ? 'Здесь' : 'Идти', () => this.pickTier(index), 'primary');
       go.classList.add('btn--sm');
       go.disabled = current;
       buys.append(costTag('🕒', best === null ? '—' : formatClock(best)), go);
     } else {
-      const key = button(`Unlock`, () => this.buyTierKey(index), 'buy');
+      const key = button('Открыть', () => this.buyTierKey(index), 'buy');
       key.classList.add('btn--sm');
       key.disabled = !buyable || meta.gems < tier.gemKey;
       buys.append(costTag('💎', formatShort(tier.gemKey)), key);
@@ -1441,7 +1441,7 @@ export class GameUi {
         el('div.shop-row__name', { textContent: tier.name }),
         el('div.shop-row__blurb', { textContent: tier.tagline }),
         el('div.shop-row__stat', {
-          textContent: `${formatShort(tier.straws)} straws  ·  ${tier.needleGems} 💎 for the needle`,
+          textContent: `${formatShort(tier.straws)} соломин  ·  ${tier.needleGems} 💎 за иголку`,
         }),
       ]),
       buys,
@@ -1456,9 +1456,9 @@ export class GameUi {
     if (settings === null) return;
 
     const audio = el('div.settings__group', undefined, [
-      el('div.settings__group-title', { textContent: 'Sound' }),
+      el('div.settings__group-title', { textContent: 'Звук' }),
       slider({
-        label: 'Master',
+        label: 'Общая',
         min: 0,
         max: 1,
         step: 0.01,
@@ -1467,7 +1467,7 @@ export class GameUi {
         onInput: (value) => this.cb.onSettingChanged('masterVolume', value),
       }),
       slider({
-        label: 'Music',
+        label: 'Музыка',
         min: 0,
         max: 1,
         step: 0.01,
@@ -1476,7 +1476,7 @@ export class GameUi {
         onInput: (value) => this.cb.onSettingChanged('musicVolume', value),
       }),
       slider({
-        label: 'Effects',
+        label: 'Эффекты',
         min: 0,
         max: 1,
         step: 0.01,
@@ -1487,9 +1487,9 @@ export class GameUi {
     ]);
 
     const controls = el('div.settings__group', undefined, [
-      el('div.settings__group-title', { textContent: 'Controls' }),
+      el('div.settings__group-title', { textContent: 'Управление' }),
       slider({
-        label: 'Look sensitivity',
+        label: 'Чувствительность мыши',
         min: 0.2,
         max: 3,
         step: 0.05,
@@ -1498,7 +1498,7 @@ export class GameUi {
         onInput: (value) => this.cb.onSettingChanged('sensitivity', value),
       }),
       slider({
-        label: 'Field of view',
+        label: 'Поле зрения',
         min: 60,
         max: 100,
         step: 1,
@@ -1507,12 +1507,12 @@ export class GameUi {
         onInput: (value) => this.cb.onSettingChanged('fov', value),
       }),
       toggle({
-        label: 'Invert vertical look',
+        label: 'Инвертировать вертикаль',
         value: settings.invertY,
         onChange: (value) => this.cb.onSettingChanged('invertY', value),
       }),
       toggle({
-        label: 'Head bob',
+        label: 'Покачивание камеры',
         value: settings.headBob,
         onChange: (value) => this.cb.onSettingChanged('headBob', value),
       }),
@@ -1521,7 +1521,7 @@ export class GameUi {
     // A real `<select>` wearing the button's clothes: the native control keeps
     // keyboard, touch and screen-reader behaviour, and `.btn` makes it look
     // like it belongs next to everything else.
-    const quality = el<'select'>('select.btn.btn--sm', { attrs: { 'aria-label': 'Graphics quality' } });
+    const quality = el<'select'>('select.btn.btn--sm', { attrs: { 'aria-label': 'Качество графики' } });
     for (const option of QUALITY_OPTIONS) {
       quality.appendChild(el<'option'>('option', { value: option.value, textContent: option.label }));
     }
@@ -1529,42 +1529,42 @@ export class GameUi {
     quality.addEventListener('change', () => this.cb.onSettingChanged('quality', quality.value));
 
     const display = el('div.settings__group', undefined, [
-      el('div.settings__group-title', { textContent: 'Display' }),
+      el('div.settings__group-title', { textContent: 'Изображение' }),
       el('div.settings__row.u-row', undefined, [
-        el('span.slider__label', { textContent: 'Quality' }),
+        el('span.slider__label', { textContent: 'Качество' }),
         el('span.u-spacer'),
         quality,
       ]),
       toggle({
-        label: 'Show FPS',
+        label: 'Показывать кадры/с',
         value: settings.showFps,
         onChange: (value) => this.cb.onSettingChanged('showFps', value),
       }),
       toggle({
-        label: 'Reduced motion',
+        label: 'Меньше движения',
         value: settings.reducedMotion,
         onChange: (value) => this.cb.onSettingChanged('reducedMotion', value),
       }),
-      el('p.settings__hint', { textContent: 'Reduced motion calms screen shake, bobbing and UI animation.' }),
+      el('p.settings__hint', { textContent: 'Ослабляет тряску экрана, покачивание и анимацию интерфейса.' }),
     ]);
 
     // Two steps, always. A one-click button that deletes every gem the player
     // has ever earned is not a button, it is a trap.
     const danger = el('div.settings__group', undefined, [
-      el('div.settings__group-title', { textContent: 'Danger zone' }),
+      el('div.settings__group-title', { textContent: 'Опасная зона' }),
       el('p.settings__hint', {
-        textContent: 'Erases gems, perks, records and your collection. There is no undo.',
+        textContent: 'Сотрёт кристаллы, бонусы, рекорды и коллекцию. Отменить нельзя.',
       }),
     ]);
     if (this.resetArmed) {
       danger.append(
         el('div.u-row', undefined, [
-          button('Yes, erase everything', () => {
+          button('Да, стереть всё', () => {
             this.resetArmed = false;
             this.cb.onResetSave();
             this.refreshOpenModal();
           }, 'danger'),
-          button('Cancel', () => {
+          button('Отмена', () => {
             this.resetArmed = false;
             this.refreshOpenModal();
           }, 'ghost'),
@@ -1572,7 +1572,7 @@ export class GameUi {
       );
     } else {
       danger.appendChild(
-        button('Reset save', () => {
+        button('Сбросить прогресс', () => {
           this.resetArmed = true;
           this.refreshOpenModal();
         }, 'danger'),
@@ -1614,8 +1614,8 @@ export class GameUi {
   }
 
   private toggleCredits(): void {
-    const credits = 'Design, code and hay by the Find the Needle team. Built on three.js.';
-    const foot = 'Made with hay, sunshine and three.js.';
+    const credits = 'Дизайн, код и сено — команда «Найди иголку». Собрано на three.js.';
+    const foot = 'Сделано из сена, солнца и three.js.';
     setText(this.titleFoot, this.titleFoot.textContent === credits ? foot : credits);
   }
 
