@@ -410,12 +410,17 @@ def build_bush():
 
 
 def build_grass_tuft():
-    """Seven blades fanned through a full circle -- the map's densest instance.
+    """Five blades fanned through a full circle -- the map's densest instance.
 
     Fanned rather than aligned so that whichever way the player faces, some
     blades present their front face to the camera.
+
+    Five and not seven.  Four thousand of these are on screen at once, so each
+    blade costs four triangles times four thousand; at 72 degrees apart the fan
+    still covers every approach, and the two that went were buying a difference
+    nobody can see at the size a tuft occupies.
     """
-    tuft = join(grass_blades("Blade", 7), "GrassTuft")
+    tuft = join(grass_blades("Blade", 5), "GrassTuft")
     flat(tuft)
     # The join target is Blade0, which still carries its lean and spin;
     # centre_origin bakes those before shifting the pivot.

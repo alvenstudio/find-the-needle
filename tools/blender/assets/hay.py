@@ -54,20 +54,28 @@ def sweep_rect(name, spine, half_w, half_h, color=None, family="Prop", caps=True
 
 
 def build_straw():
-    """A single sliver of straw: 0.32 m long, flat, with a lazy S-bend.
+    """A single sliver of straw: 0.32 m long, flat, with one lazy bend.
 
-    Deliberately wide and flat rather than round. Sixteen thousand of these tile
-    the surface of the pile, and a flat sliver covers roughly four times the
-    area of a round stalk of the same length for the same instance cost -- and
-    per-instance overhead, not triangles, is what the pile is bound by.
+    Deliberately wide and flat rather than round. Seventeen thousand of these
+    tile the surface of the pile, and a flat sliver covers roughly four times
+    the area of a round stalk of the same length for the same instance cost.
+
+    Three stations, not four.  Four gave it a shallow S, which is a nicer shape
+    on a turntable and is worth eight triangles out of twenty-eight -- 40% of
+    the whole hay budget -- for a curve that is under a pixel of deviation at
+    the distance the straws are actually seen.  One bend reads the same and the
+    pile draws a fifth fewer triangles.  The caps stay: the taper only pinches
+    to 40% of full girth, so an open end is a visible hole and not a rounding
+    error.
     """
     length = 0.32
-    stations = 4
+    stations = 3
     spine = []
     for i in range(stations):
         t = i / (stations - 1)
-        # A shallow S so a field of randomly rotated straws never looks gridded.
-        bend = math.sin(t * math.pi) * 0.026 - math.sin(t * math.pi * 2.0) * 0.014
+        # A single shallow arc.  The randomised yaw and tilt per instance is
+        # what stops a field of these looking gridded, not the shape.
+        bend = math.sin(t * math.pi) * 0.026
         spine.append((bend, 0.0, (t - 0.5) * length))
 
     # Taper: fat in the middle third, pinched at the tips.
