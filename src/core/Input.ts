@@ -385,7 +385,8 @@ export class Input {
     this.listen(this.element, 'touchcancel', endTouch, options);
   }
 
-  private releaseAll(): void {
+  /** Drop every held key and button - focus loss, a pause, an advert opening. */
+  releaseAll(): void {
     for (const action of [...this.held]) this.release(action);
     this.touchMoveVector.x = this.touchMoveVector.y = 0;
     this.touchMoveId = this.touchLookId = -1;

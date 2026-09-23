@@ -143,6 +143,54 @@ npm run balance  # play a few thousand simulated runs and print the pacing
 npm run assets   # optimise the .glb library in place
 ```
 
+### Yandex Games
+
+The game ships to [Yandex Games](https://yandex.ru/games/) as well as to the web,
+and that platform is strict in a very mechanical way: a moderator opens the draft
+with a debug panel and checks a list. `src/platform/ysdk.ts` is the only file that
+touches `window.YaGames`; the rest of the game calls `loadingReady()`,
+`showInterstitial()`, `showRewarded()` and `saveCloudDebounced()` and never knows
+whether the platform is there.
+
+```bash
+npm run build:yandex   # production build without the admin console
+npm run pack:yandex    # the above, then validate and zip into build.zip
+```
+
+`tools/pack.mjs` is the packer, and it is not optional: a zip made by Windows
+PowerShell has backslash entry names, the platform then serves only `index.html`,
+and the rejection reads "SDK not integrated". It also checks the things that are
+easy to get wrong - `index.html` at the archive root, no absolute asset paths, no
+CDN hosts, the `/sdk.js` tag present, the archive under 100 MB.
+
+What the platform wiring actually does, and why each piece is where it is:
+
+- **The SDK tag is `<script src="/sdk.js">`, root-relative and unbundled.** The
+  platform serves that exact path itself. It 404s everywhere else, so a dev-only
+  Vite middleware answers it with a one-line stub - not to fake the SDK, but so
+  the console has no permanent red line in it.
+- **Boot order is the requirement.** The handshake starts before anything is
+  constructed, because it is what reads the portal language; the cloud save is
+  awaited before `Game.boot`, because everything downstream is built from the
+  save; and `ready()` fires on the line where the title screen appears. Early is
+  a rejection, late is a rejection, and on a timer is a rejection.
+- **The cloud save rides on the local one.** `SaveManager.saved` already fires at
+  every moment worth keeping, so the cloud write hangs off it, debounced to stay
+  under the platform's rate limit and flushed on `pagehide`. Coming back, the
+  newer of the two wins - not the cloud, or a player who played offline gets
+  rolled back by a stale blob.
+- **One interstitial, on travel.** The player has just pressed a button, the
+  stack behind them is finished, and nothing is happening that an interruption
+  can ruin. Four-minute cooldown against a seven-minute stack means at most one
+  per haystack.
+- **One rewarded video, on the summary card**, doubling that run's gems. The
+  reward is granted in the platform's `onRewarded` and nowhere else: granting in
+  `onClose` pays out for closing the advert after two seconds.
+- **The admin console is not in the store build.** `--mode yandex` switches
+  `VITE_DEV_CONSOLE` off and the bundler drops the module - a reachable developer
+  console is both technical text and a cheat. It stays in the public web build,
+  which is where it is useful.
+
 ---
 
 ## How it is built

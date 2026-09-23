@@ -100,6 +100,20 @@ export interface UiCallbacks {
   /** Fired whenever any modal closes, however it was closed. */
   onCloseModal(): void;
   onSound(name: 'ui_hover' | 'ui_click' | 'ui_open' | 'ui_close'): void;
+  /**
+   * Whether a rewarded video can be offered at all.
+   *
+   * Asked rather than assumed: off the platform, on a TV, or when the ad
+   * network has nothing to show, the button must not exist. An offer that
+   * cannot be taken is worse than no offer.
+   */
+  rewardedAvailable(): boolean;
+  /**
+   * Offer to double the gems from this run for watching a video. `done` is
+   * called with true only if the video was actually watched to the point where
+   * the platform says the reward is earned.
+   */
+  onDoubleGems(gems: number, done: (granted: boolean) => void): void;
 }
 
 /** The four panels the HUD's action rail can open. */
@@ -766,6 +780,36 @@ export class GameUi {
       }, 'buy'),
       button('На ферму', () => this.quitToTitle(false), 'ghost'),
     );
+
+    // The one advert the player is ever asked to choose. The label has to name
+    // both the advert and what it buys - "посмотреть рекламу" alone is a
+    // rejection, and so is a bare "+50 💎" that does not say where it comes
+    // from. The gems are a bonus on top of what was already paid out, never a
+    // ransom on it.
+    if (summary.gemsTotal > 0 && this.cb.rewardedAvailable()) {
+      const doubler = button(
+        `Реклама: ещё ${formatShort(summary.gemsTotal)} 💎`,
+        () => {
+          doubler.disabled = true;
+          doubler.textContent = 'Загрузка рекламы…';
+          this.cb.onDoubleGems(summary.gemsTotal, (granted) => {
+            if (!granted) {
+              doubler.disabled = false;
+              doubler.textContent = `Реклама: ещё ${formatShort(summary.gemsTotal)} 💎`;
+              return;
+            }
+            // The card's own count-up is on a timer; if it has not fired yet
+            // it would land after this and put the single total back.
+            this.clearCountUps();
+            this.titleGems += summary.gemsTotal;
+            totalChip.set(summary.gemsTotal * 2);
+            doubler.remove();
+          });
+        },
+        'buy',
+      );
+      actions.appendChild(doubler);
+    }
 
     this.celebrateCard.append(
       el('div.celebrate__needle', { textContent: '🪡', attrs: { 'aria-hidden': 'true' } }),

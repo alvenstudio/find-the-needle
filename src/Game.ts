@@ -8,6 +8,15 @@ import { clamp01, damp, formatShort, lerp } from './core/MathX';
 import { Rng, hashSeed } from './core/Rng';
 import { SaveManager } from './core/Save';
 import { AudioSystem } from './audio/Audio';
+import {
+  flushCloudSave,
+  hasSDK,
+  isTV,
+  saveCloudDebounced,
+  setGameplayActive,
+  showInterstitial,
+  showRewarded,
+} from './platform/ysdk';
 import { Particles } from './fx/Particles';
 import { FlashLayer, ScreenEffects } from './fx/ScreenEffects';
 import { BuriedField } from './gameplay/Buried';
@@ -76,6 +85,19 @@ const COLLECT_OFFSET = new Vector3(0, -0.45, 0);
  */
 const BOUNDARY_MARGIN = 17;
 
+/**
+ * Shortest gap between two interstitials, in wall-clock milliseconds.
+ *
+ * Four minutes against a stack that takes seven to ten means at most one per
+ * haystack, and usually fewer. The platform's own floor is a minute; this is
+ * not a technical limit but a judgement about a game whose whole appeal is
+ * that it is calm.
+ */
+const AD_COOLDOWN_MS = 240_000;
+
+/** False only in the Yandex store build. See `devConsole`. */
+const DEV_CONSOLE_ENABLED = import.meta.env.VITE_DEV_CONSOLE !== 'false';
+
 /** How each species behaves once it is in the yard. */
 const LIVESTOCK: Record<string, { model: string; count: number; roam: number; speed: number }> = {
   cow: { model: 'cow', count: 0, roam: 3.5, speed: 0.5 },
@@ -93,7 +115,16 @@ export class Game {
   private readonly save = new SaveManager();
   private readonly meta: Meta;
   private readonly ui: GameUi;
-  private readonly devConsole: DevConsole;
+  /**
+   * The admin console, or nothing at all.
+   *
+   * Yandex Games treats a reachable developer console as technical text and as
+   * a cheat, and both are rejections - so the store build is made with
+   * `--mode yandex`, which switches `VITE_DEV_CONSOLE` off and lets the bundler
+   * drop the whole module. Everywhere else it is there, including the public
+   * web build, because it is how this game gets tested.
+   */
+  private readonly devConsole: DevConsole | null;
 
   private readonly collision = new CollisionWorld();
   private readonly terrain: Terrain;
@@ -108,6 +139,11 @@ export class Game {
   private livestock: Livestock | null = null;
   /** The cow beside the trough, kept so it can answer when it is fed. */
   private troughCow: Object3D | null = null;
+
+  /** Wall-clock time of the last interstitial, for the cooldown. */
+  private lastAdAt = -Infinity;
+  /** Raised while travelling, so a platform pause does not fight the handover. */
+  private inTransition = false;
   private interactions: InteractionSystem;
   private dig: DigSystem | null = null;
   /** Detaches the pile's ground sampler; see `openStack`. */
@@ -189,9 +225,11 @@ export class Game {
       onOpenPanel: (panel) => this.openPanel(panel),
       onCloseModal: () => this.onModalClosed(),
       onSound: (name) => this.audio.play(name),
+      rewardedAvailable: () => hasSDK() && !isTV(),
+      onDoubleGems: (gems, done) => this.doubleGems(gems, done),
     });
 
-    this.devConsole = new DevConsole(uiRoot, this.devApi());
+    this.devConsole = DEV_CONSOLE_ENABLED ? new DevConsole(uiRoot, this.devApi()) : null;
 
     this.applyAllSettings();
     this.engine.fixedUpdate.on((dt) => this.fixedUpdate(dt));
@@ -229,7 +267,7 @@ export class Game {
     // reading a menu, which is the cheapest loading screen there is.
     void this.assets.loadAll(DEFERRED_ASSETS).then(() => {
       this.buildScenery();
-      this.ui.setLoadingProgress(1, 'Ready');
+      this.ui.setLoadingProgress(1, 'Готово');
     });
 
     this.state = 'title';
@@ -243,7 +281,7 @@ export class Game {
   /** Movement is enabled whenever the player is in the world and unblocked. */
   private syncControl(): void {
     this.player.controlEnabled =
-      this.state === 'playing' && !this.ui.modalOpen && !this.devConsole.isOpen;
+      this.state === 'playing' && !this.ui.modalOpen && !(this.devConsole?.isOpen ?? false);
   }
 
   private beginPlaying(): void {
@@ -686,6 +724,17 @@ export class Game {
     this.meta.gemsChanged.on((gems) => this.ui.setGems(gems));
 
     window.addEventListener('beforeunload', () => this.persist());
+
+    // Every local write goes to the cloud as well. The signal fires on flush,
+    // which is already the "something worth keeping happened" moment, so the
+    // cloud copy can never drift from the local one.
+    this.save.saved.on((data) => saveCloudDebounced(data));
+    // A tab being hidden is the last chance to get a save out; `pagehide` is
+    // the one event that survives a mobile browser being killed outright.
+    window.addEventListener('pagehide', () => {
+      this.persist();
+      void flushCloudSave();
+    });
   }
 
   // ------------------------------------------------------------ interaction
@@ -881,14 +930,82 @@ export class Game {
     }
     this.ui.closeModal();
     this.ui.hideSummary();
+
+    // The only place an advert interrupts anything. It is the right place: the
+    // player has just pressed a button, the stack they were on is finished,
+    // and nothing is happening that an interruption can ruin. Never on a
+    // timer, and never often - a stack is the best part of ten minutes, so the
+    // cooldown means at most one of these per haystack.
+    await this.adBreak();
+
     this.flash.flash('#ffffff', 0.9, 1.4);
     this.openStack(target, makeRunSeed(target.id, this.meta.stats.runs, Date.now()));
     this.audio.setAmbience(target.mood);
     this.state = 'playing';
     this.syncControl();
+    this.ui.hidePause();
     this.ui.showHud();
     void this.input.requestLock();
     this.save.touch();
+  }
+
+  /**
+   * Show an interstitial, if one is due.
+   *
+   * Sound and simulation stop for the duration. On the platform the SDK also
+   * fires its own pause event, which lands on `suspendForPlatform` and does
+   * the same thing; both paths are idempotent, and the transition flag keeps
+   * the pause menu from appearing over a screen the player is leaving anyway.
+   */
+  private async adBreak(): Promise<void> {
+    if (!hasSDK()) return;
+    const now = performance.now();
+    if (now - this.lastAdAt < AD_COOLDOWN_MS) return;
+    this.lastAdAt = now;
+    this.inTransition = true;
+    this.input.releaseAll();
+    this.audio.suspend();
+    try {
+      await showInterstitial();
+    } finally {
+      this.inTransition = false;
+      this.audio.resume();
+    }
+  }
+
+  /**
+   * Double this run's gems for a watched video.
+   *
+   * The reward is granted in the platform's `onRewarded` and nowhere else: an
+   * `onClose` grant pays out for closing the advert after two seconds, which
+   * is both an exploit and a rejection.
+   */
+  private doubleGems(gems: number, done: (granted: boolean) => void): void {
+    if (gems <= 0 || !hasSDK()) {
+      done(false);
+      return;
+    }
+    let granted = false;
+    void showRewarded(
+      () => {
+        granted = true;
+        this.meta.addGems(gems);
+        this.audio.play('coin', { rate: 1.2 });
+        this.save.flush();
+      },
+      {
+        onOpen: () => {
+          this.input.releaseAll();
+          this.audio.suspend();
+        },
+        // Fires exactly once whatever happened - watched, skipped, failed or
+        // offline - so it is the only place the button needs to be released.
+        onClose: () => {
+          this.audio.resume();
+          done(granted);
+        },
+      },
+    );
   }
 
   private async replayStack(): Promise<void> {
@@ -915,6 +1032,39 @@ export class Game {
     this.audio.setMusic(settings.musicVolume > 0);
     this.screen.intensity = settings.reducedMotion ? 0.25 : 1;
     if (settings.quality !== 'auto') this.engine.setQuality(settings.quality as QualityTier);
+  }
+
+  /**
+   * Adopt a save that arrived from the platform's cloud. Called once, before
+   * `boot`, so everything downstream is built from the final save.
+   */
+  hydrateSave(raw: unknown): void {
+    const outcome = this.save.hydrate(raw);
+    if (outcome === 'adopted') this.applyAllSettings();
+  }
+
+  /**
+   * The screen has gone away: a tab switch, the phone locking, an advert or a
+   * purchase window. Freeze everything within the platform's two seconds.
+   *
+   * Idempotent, and deliberately does not resume by itself - coming back to a
+   * pause menu is expected, and un-pausing a player who is not looking is how
+   * you return them to a dead character in a game that has one.
+   */
+  suspendForPlatform(): void {
+    this.input.releaseAll();
+    setGameplayActive(false);
+    if (this.inTransition) {
+      this.audio.suspend();
+      return;
+    }
+    if (this.state === 'playing') this.setPaused(true);
+    else this.audio.suspend();
+  }
+
+  resumeFromPlatform(): void {
+    // While the pause card is up the audio belongs to the pause, not to us.
+    if (this.state !== 'paused') this.audio.resume();
   }
 
   private resetSave(): void {
@@ -1082,6 +1232,12 @@ export class Game {
     this.elapsed += dt;
     const settings = this.save.state.settings;
 
+    // Gameplay markup, told once a frame rather than hooked onto each of the
+    // dozen places `state` changes. The call de-duplicates itself, so this is
+    // one comparison per frame and no transition can ever be missed - which is
+    // the failure mode the markup is checked for.
+    setGameplayActive(this.state === 'playing' && !this.inTransition);
+
     this.player.applyToCamera(this.engine.camera, this.engine.alpha, this.elapsed, settings.headBob ? 1 : 0);
     this.screen.update(dt);
     const inspecting = this.state === 'playing' && this.input.isDown('inspect');
@@ -1103,7 +1259,7 @@ export class Game {
       this.particles.update(dt);
     }
     this.pile?.update(this.player.position);
-    this.devConsole.update();
+    this.devConsole?.update();
 
     this.engine.camera.getWorldPosition(this.scratch);
     this.engine.camera.getWorldDirection(this.scratchB);
@@ -1346,7 +1502,7 @@ export class Game {
     this.assets.dispose();
     this.audio.dispose();
     this.flash.dispose();
-    this.devConsole.dispose();
+    this.devConsole?.dispose();
     this.ui.dispose();
     this.input.dispose();
     this.engine.dispose();

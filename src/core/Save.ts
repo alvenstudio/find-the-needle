@@ -232,6 +232,32 @@ export class SaveManager {
     return this.data;
   }
 
+  /**
+   * Take a save that arrived from somewhere else - the Yandex cloud, say - and
+   * adopt it if it is newer than what is already here.
+   *
+   * Newer wins rather than cloud wins. A player who keeps playing while the
+   * cloud round-trip is in flight, or who played offline on this machine after
+   * last syncing, would otherwise be rolled back by a stale blob. The migration
+   * runs first, so a save written by an older build of the game is still
+   * readable; one that cannot be migrated is ignored rather than adopted.
+   */
+  hydrate(raw: unknown): 'adopted' | 'older' | 'unusable' {
+    if (raw === null || typeof raw !== 'object') return 'unusable';
+    const migrated = migrate(raw as Record<string, unknown>);
+    if (!migrated) return 'unusable';
+    if (migrated.updatedAt <= this.data.updatedAt) return 'older';
+    // Merged into the existing object rather than replacing it. Everything
+    // that was handed `state` at construction - `Meta`, most of the UI - holds
+    // a reference to it, and swapping the reference would leave all of them
+    // reading a save the game no longer uses.
+    Object.assign(this.data, migrated);
+    // Write it straight through so local storage agrees even if the tab closes
+    // before the next autosave.
+    this.flush();
+    return 'adopted';
+  }
+
   replace(data: SaveData): void {
     this.data = data;
     this.flush();
