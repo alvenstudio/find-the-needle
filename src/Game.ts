@@ -989,7 +989,7 @@ export class Game {
     // needs the lock, and `Input` already discards motion without it; a browser
     // that refuses the lock should still leave a playable game.
     const digging = this.input.isDown('dig');
-    dig.update(dt, this.engine.camera, run.stats, digging);
+    dig.update(dt, this.engine.camera, run.stats, digging, run.carried);
     this.viewmodel?.setStreaming(dig.streaming);
 
     this.buried?.update(dt, this.player.position);

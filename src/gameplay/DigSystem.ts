@@ -47,9 +47,6 @@ export class DigSystem {
   /** Fired when the pile is emptied by this dig. */
   readonly pileCleared = new Signal<void>();
 
-  /** Straws currently carried. */
-  carried = 0;
-
   /**
    * Straws per cubic metre for the active stack.
    *
@@ -58,8 +55,6 @@ export class DigSystem {
    * count can never drift apart.
    */
   density = 1;
-
-  private capacity = 1;
 
   /** Where the aim ray last hit, and how far away. */
   readonly aimPoint = new Vector3();
@@ -82,10 +77,6 @@ export class DigSystem {
     this.aimState = 'none';
   }
 
-  get capacityFraction(): number {
-    return this.capacity <= 0 ? 0 : clamp01(this.carried / this.capacity);
-  }
-
   /** How many straws this stack still holds. */
   get strawsLeft(): number {
     return this.pile.field.remainingVolume * this.density;
@@ -96,8 +87,13 @@ export class DigSystem {
    *
    * Returns true when hay was removed this step.
    */
-  update(dt: number, camera: PerspectiveCamera, stats: DerivedStats, digging: boolean): boolean {
-    this.capacity = stats.capacity;
+  update(
+    dt: number,
+    camera: PerspectiveCamera,
+    stats: DerivedStats,
+    digging: boolean,
+    carried: number,
+  ): boolean {
     this.cooldownRemaining = Math.max(0, this.cooldownRemaining - dt);
 
     camera.getWorldPosition(this.rayOrigin);
@@ -120,13 +116,13 @@ export class DigSystem {
 
     if (stats.tool.continuous) {
       this.streaming = true;
-      return this.bite(stats, stats.digDepth * dt, false);
+      return this.bite(stats, stats.digDepth * dt, false, carried);
     }
 
     if (this.cooldownRemaining > 0) return false;
     this.cooldownRemaining = stats.cooldown;
     this.swingStarted.emit();
-    return this.bite(stats, stats.digDepth, true);
+    return this.bite(stats, stats.digDepth, true, carried);
   }
 
   /**
@@ -137,15 +133,14 @@ export class DigSystem {
    * more annoying; this way a player who forgets to sell loses money, not
    * progress, and the HUD nag does the teaching.
    */
-  private bite(stats: DerivedStats, depth: number, discrete: boolean): boolean {
+  private bite(stats: DerivedStats, depth: number, discrete: boolean, carried: number): boolean {
     if (depth <= 0) return false;
     const volume = this.pile.dig(this.aimPoint, stats.digRadius, depth);
     if (volume <= 0) return false;
 
     const straws = volume * this.density;
-    const room = Math.max(0, this.capacity - this.carried);
+    const room = Math.max(0, stats.capacity - carried);
     const collected = Math.min(straws, room);
-    this.carried += collected;
 
     const overflow = collected < straws - 1e-6;
     if (overflow && discrete) this.backpackFull.emit();
@@ -164,15 +159,7 @@ export class DigSystem {
     return true;
   }
 
-  /** Empty the backpack, returning what was in it. */
-  unload(): number {
-    const amount = this.carried;
-    this.carried = 0;
-    return amount;
-  }
-
   reset(): void {
-    this.carried = 0;
     this.cooldownRemaining = 0;
     this.streaming = false;
     this.aimDistance = -1;
