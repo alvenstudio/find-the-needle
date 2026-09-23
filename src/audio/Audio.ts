@@ -56,9 +56,13 @@ export type SoundName =
   | 'error'
   | 'tick'
   | 'cow_moo'
+  | 'cow_snort'
   | 'chicken_cluck'
+  | 'chicken_squawk'
   | 'cat_meow'
-  | 'crow_caw';
+  | 'cat_chirrup'
+  | 'crow_caw'
+  | 'crow_rattle';
 
 export interface Vec3 {
   x: number;
@@ -2005,6 +2009,185 @@ const SOUNDS: Record<SoundName, SoundSpec> = {
           decay: 0.14,
         });
       }
+    },
+  },
+
+  /*
+   * A second call for each species.
+   *
+   * One call per animal is what makes a farmyard sound like a sample library:
+   * the third identical moo is the one the ear stops believing, and no amount
+   * of pitch jitter fixes it, because what repeats is the shape, not the note.
+   * These four are deliberately the opposite shape to their partner - short
+   * where the first is long, noisy where the first is pitched - so the pair
+   * reads as one animal with two things to say.
+   */
+
+  /** A cow clearing its nose: no pitch to speak of, just a wet burst of air. */
+  cow_snort: {
+    bus: 'sfx',
+    gain: 0.42,
+    detune: 2.4,
+    reverb: 0.2,
+    tail: 0.5,
+    build(p) {
+      const f = p.rate;
+      burst(p, {
+        kind: 'brown',
+        type: 'bandpass',
+        freq: 480 * f,
+        toFreq: 190 * f,
+        q: 1.3,
+        level: 0.4,
+        attack: 0.006,
+        decay: 0.26,
+      });
+      // A little pitched weight underneath, or it is a gust of wind and not
+      // an animal that weighs half a tonne.
+      tone(p, {
+        type: 'sawtooth',
+        freq: 108 * f,
+        toFreq: 78 * f,
+        glide: 0.18,
+        level: 0.13,
+        attack: 0.01,
+        decay: 0.22,
+      });
+      // Just a breath of air on top. Any more and the spectral centre of the
+      // whole snort moves up into hiss and it stops being a large animal.
+      burst(p, {
+        at: 0.04,
+        kind: 'white',
+        type: 'highpass',
+        freq: 1500 * f,
+        q: 0.6,
+        level: 0.03,
+        attack: 0.004,
+        decay: 0.1,
+      });
+    },
+  },
+
+  /** A startled hen: one rising squawk with the panic left in. */
+  chicken_squawk: {
+    bus: 'sfx',
+    gain: 0.3,
+    detune: 3.2,
+    reverb: 0.16,
+    tail: 0.6,
+    build(p) {
+      const f = p.rate;
+      const cry = tone(p, {
+        type: 'sawtooth',
+        freq: 620 * f,
+        toFreq: 1180 * f,
+        glide: 0.1,
+        level: 0.26,
+        attack: 0.006,
+        hold: 0.06,
+        release: 0.2,
+      });
+      // Driving a bandpass hard is what turns a rising saw into a bird rather
+      // than a siren: the resonance moves with the note and the rest is gone.
+      const throat = p.biquad('bandpass', 1500 * f, 2.2);
+      throat.frequency.setValueAtTime(1100 * f, p.t0);
+      throat.frequency.exponentialRampToValueAtTime(2300 * f, p.t0 + 0.14);
+      cry.disconnect();
+      cry.connect(throat);
+      throat.connect(p.out);
+      burst(p, {
+        at: 0.01,
+        type: 'bandpass',
+        freq: 2800 * f,
+        toFreq: 1600 * f,
+        q: 2.2,
+        level: 0.14,
+        attack: 0.003,
+        decay: 0.18,
+      });
+      tone(p, {
+        at: 0.2,
+        type: 'square',
+        freq: 700 * f,
+        toFreq: 420 * f,
+        glide: 0.06,
+        level: 0.1,
+        attack: 0.004,
+        decay: 0.08,
+      });
+    },
+  },
+
+  /** A cat's chirrup: the short rising question, not the demand. */
+  cat_chirrup: {
+    bus: 'sfx',
+    gain: 0.36,
+    detune: 2.6,
+    reverb: 0.18,
+    tail: 0.5,
+    build(p) {
+      const f = p.rate;
+      const trill = tone(p, {
+        type: 'triangle',
+        freq: 620 * f,
+        toFreq: 980 * f,
+        glide: 0.16,
+        level: 0.22,
+        attack: 0.02,
+        hold: 0.04,
+        release: 0.16,
+      });
+      const mouth = p.biquad('bandpass', 1400 * f, 2.4);
+      // The roll in the middle of the word. A cat's chirrup is a trill, and a
+      // trill is amplitude modulation - about 30 Hz of it. It has to ride on a
+      // real gain stage: a bandpass has a `gain` param but does not use it, so
+      // modulating that is an oscillator wired to nothing.
+      const am = p.gain(0.8);
+      const wobble = p.osc('sine', 30, p.t0, p.t0 + 0.24);
+      const depth = p.gain(0.35);
+      wobble.connect(depth);
+      depth.connect(am.gain);
+      trill.disconnect();
+      trill.connect(mouth);
+      mouth.connect(am);
+      am.connect(p.out);
+      tone(p, {
+        at: 0.015,
+        type: 'sine',
+        freq: 1240 * f,
+        toFreq: 1900 * f,
+        glide: 0.15,
+        level: 0.05,
+        attack: 0.02,
+        decay: 0.16,
+      });
+    },
+  },
+
+  /** A crow's rattle: the dry wooden knock-knock-knock, no pitch at all. */
+  crow_rattle: {
+    bus: 'sfx',
+    gain: 0.34,
+    detune: 2,
+    reverb: 0.3,
+    tail: 0.5,
+    build(p) {
+      const f = p.rate;
+      for (let i = 0; i < 7; i++) {
+        // Accelerating and fading: a rattle that keeps a steady tempo reads as
+        // a machine, and the bird is running out of breath.
+        const at = i * (0.055 - i * 0.0035);
+        woodKnock(p, at, (1180 - i * 45) * f, 0.42 * (1 - i / 9));
+      }
+      burst(p, {
+        kind: 'brown',
+        type: 'bandpass',
+        freq: 620 * f,
+        q: 1.1,
+        level: 0.1,
+        attack: 0.01,
+        decay: 0.3,
+      });
     },
   },
 };

@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { Vector3, type Object3D } from 'three';
 
 import { Assets } from './core/Assets';
 import { Engine, type QualityTier } from './core/Engine';
@@ -106,6 +106,8 @@ export class Game {
   private buried: BuriedField | null = null;
   private scenery: Scenery | null = null;
   private livestock: Livestock | null = null;
+  /** The cow beside the trough, kept so it can answer when it is fed. */
+  private troughCow: Object3D | null = null;
   private interactions: InteractionSystem;
   private dig: DigSystem | null = null;
   /** Detaches the pile's ground sampler; see `openStack`. */
@@ -358,6 +360,7 @@ export class Game {
       this.engine.scene.remove(this.livestock.group);
       this.livestock.dispose();
       this.livestock = null;
+      this.troughCow = null;
     }
     const tier = this.currentTier;
     this.terrain.clearDirtPatches();
@@ -393,8 +396,12 @@ export class Game {
     const livestock = new Livestock(this.assets, this.terrain, hashSeed(`${tier.id}:stock`));
     // The world layer knows nothing about audio; it just says who made a noise
     // and where, and the game turns that into a positional voice.
-    livestock.voice = (sound, position) => {
-      this.audio.play(sound as Parameters<AudioSystem['play']>[0], { position, volume: 0.9 });
+    livestock.voice = (sound, position, rate) => {
+      this.audio.play(sound as Parameters<AudioSystem['play']>[0], {
+        position,
+        volume: 0.9,
+        rate,
+      });
     };
     this.engine.scene.add(livestock.group);
     this.livestock = livestock;
@@ -419,6 +426,7 @@ export class Game {
         0,
       );
       if (cow) livestock.faceToward(cow, sell.x, sell.z);
+      this.troughCow = cow;
     }
 
     const palette = SCENE_PALETTES[tier.scene];
@@ -738,6 +746,9 @@ export class Game {
     }
     this.ui.banner(`Продано сена: ${formatShort(result.straws)} за ${formatShort(result.cash)} монет`, 'good');
     this.audio.play('sell');
+    // You are feeding the cow. It should say something about that - and it is
+    // the one animal call in the game the player is guaranteed to trigger.
+    if (this.troughCow && this.livestock) this.livestock.callOut(this.troughCow, 'cow_moo');
     const sellPoint = this.interactions.positionOf('sell');
     if (sellPoint && this.particles) {
       this.scratch.copy(sellPoint).setY(sellPoint.y + 1.1);
@@ -1081,7 +1092,7 @@ export class Game {
     );
     this.environment.update(dt, this.engine.camera, this.player.position);
     this.scenery?.update(dt);
-    this.livestock?.update(dt);
+    this.livestock?.update(dt, this.player.position);
     this.flash.update(dt);
 
     this.input.drainLook(this.lookDelta);

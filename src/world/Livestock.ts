@@ -54,8 +54,15 @@ export interface LivestockSpec {
   scale?: number;
 }
 
-/** Called when an animal makes a noise, so the world layer never imports audio. */
-export type VoiceSink = (sound: string, position: Vector3) => void;
+/**
+ * Called when an animal makes a noise, so the world layer never imports audio.
+ *
+ * `rate` is the individual animal's pitch. Two hens in the same yard are not
+ * the same hen, and a random jitter applied per *call* does not fix that - it
+ * makes one hen that cannot make up its mind. The offset has to belong to the
+ * animal and stay put.
+ */
+export type VoiceSink = (sound: string, position: Vector3, rate: number) => void;
 
 /** One bone swung as a function of stride phase. */
 interface Swing {
@@ -78,8 +85,20 @@ interface Gait {
   legs: Swing[];
   /** Tails, heads and anything else that moves with the walk but is not a leg. */
   extras?: Swing[];
-  /** The noise it makes, and how often, in seconds. */
-  voice?: { sound: string; gap: [number, number] };
+  /**
+   * The noises it makes.
+   *
+   * `calls` is everything it says when nothing is happening, picked at random;
+   * `notice` is what it says when the player walks up to it, which is the only
+   * one the player reliably connects to the animal in front of them. `spread`
+   * is how far individuals of this species drift from the nominal pitch.
+   */
+  voice?: {
+    calls: readonly string[];
+    gap: [number, number];
+    spread: number;
+    notice?: { radius: number; call: string; cooldown: [number, number] };
+  };
 }
 
 /**
@@ -108,7 +127,14 @@ const GAITS: Readonly<Record<string, Gait>> = {
       { bone: 'tail', phase: 0.25, amplitude: 0.12, axis: 'z' },
       { bone: 'head', phase: 0.5, amplitude: 0.06, axis: 'x' },
     ],
-    voice: { sound: 'cow_moo', gap: [14, 40] },
+    // A cow is big and slow and does not startle, so it answers you rather
+    // than panicking: walk up and it looks round and moos.
+    voice: {
+      calls: ['cow_moo', 'cow_snort', 'cow_snort'],
+      gap: [11, 26],
+      spread: 0.07,
+      notice: { radius: 7, call: 'cow_moo', cooldown: [8, 14] },
+    },
   },
   chicken: {
     cadence: 2.4,
@@ -124,7 +150,14 @@ const GAITS: Readonly<Record<string, Gait>> = {
       { bone: 'neck', phase: 0, amplitude: 0.22, axis: 'x' },
       { bone: 'body', phase: 0.25, amplitude: 0.07, axis: 'x' },
     ],
-    voice: { sound: 'chicken_cluck', gap: [7, 22] },
+    // Hens are the noisiest thing in the yard and the twitchiest: they squawk
+    // the moment you are inside a few metres.
+    voice: {
+      calls: ['chicken_cluck', 'chicken_cluck', 'chicken_squawk'],
+      gap: [5, 15],
+      spread: 0.16,
+      notice: { radius: 4.5, call: 'chicken_squawk', cooldown: [5, 9] },
+    },
   },
   cat: {
     // No leg bones on this rig, so the walk lives entirely in the body: a low
@@ -139,7 +172,13 @@ const GAITS: Readonly<Record<string, Gait>> = {
       { bone: 'tail3', phase: 0.3, amplitude: 0.16, axis: 'x' },
       { bone: 'body', phase: 0.5, amplitude: 0.05, axis: 'x' },
     ],
-    voice: { sound: 'cat_meow', gap: [16, 48] },
+    // The cat greets you and then goes back to ignoring you.
+    voice: {
+      calls: ['cat_meow', 'cat_chirrup', 'cat_chirrup'],
+      gap: [12, 30],
+      spread: 0.12,
+      notice: { radius: 5.5, call: 'cat_chirrup', cooldown: [7, 13] },
+    },
   },
   crow: {
     // A crow does not walk so much as hop, so the bounce is large and the
@@ -152,7 +191,14 @@ const GAITS: Readonly<Record<string, Gait>> = {
       { bone: 'body', phase: 0, amplitude: 0.1, axis: 'x' },
       { bone: 'tail', phase: 0.5, amplitude: 0.12, axis: 'x' },
     ],
-    voice: { sound: 'crow_caw', gap: [9, 26] },
+    // A crow does not greet anything. It tells the rest of the yard you are
+    // here, which is the same sound it makes at everything else.
+    voice: {
+      calls: ['crow_caw', 'crow_rattle', 'crow_caw'],
+      gap: [8, 20],
+      spread: 0.1,
+      notice: { radius: 6, call: 'crow_caw', cooldown: [6, 11] },
+    },
   },
 };
 
@@ -184,7 +230,16 @@ interface Animal {
   walking: number;
   /** Seconds until this animal next makes a noise. */
   voiceTimer: number;
+  /** This individual's pitch, fixed at spawn so it keeps the same voice. */
+  pitch: number;
+  /** Seconds before it will react to the player again. */
+  noticeTimer: number;
+  /** True while the player is standing inside its notice radius. */
+  noticed: boolean;
 }
+
+/** Leaving the notice radius takes a little more than entering it did. */
+const NOTICE_HYSTERESIS = 1.6;
 
 /** How long an animal stands still, chewing or pecking, between walks. */
 const PAUSE_RANGE: [number, number] = [3.5, 11];
@@ -308,6 +363,9 @@ export class Livestock {
       stride: this.rng.next(),
       walking: 0,
       voiceTimer: gait?.voice ? this.rng.range(2, gait.voice.gap[1]) : Infinity,
+      pitch: gait?.voice ? 1 + this.rng.range(-gait.voice.spread, gait.voice.spread) : 1,
+      noticeTimer: 0,
+      noticed: false,
     });
     return object;
   }
@@ -329,7 +387,11 @@ export class Livestock {
     return driven;
   }
 
-  update(dt: number): void {
+  /**
+   * `listener` is where the player is. Animals that can hear it coming react
+   * to it; pass null and they just get on with their day.
+   */
+  update(dt: number, listener: Vector3 | null = null): void {
     for (const animal of this.animals) {
       animal.mixer.update(dt);
       animal.timer -= dt;
@@ -355,6 +417,7 @@ export class Livestock {
       }
 
       this.speak(animal, dt);
+      if (listener) this.notice(animal, dt, listener);
 
       let stepLength = 0;
       if (animal.moving) {
@@ -435,8 +498,57 @@ export class Livestock {
     animal.voiceTimer -= dt;
     if (animal.voiceTimer > 0) return;
     animal.voiceTimer = this.rng.range(voice.gap[0], voice.gap[1]);
+    this.say(animal, voice.calls[this.rng.int(0, voice.calls.length - 1)]);
+  }
+
+  /**
+   * React to the player walking up.
+   *
+   * This is the half of the farmyard the player actually hears. A call on a
+   * random timer is scenery: it happens whether or not anyone is there, and
+   * the ear files it with the wind. A call that fires because you walked up to
+   * a hen is the hen talking to you, and it is the same sound.
+   *
+   * Edge-triggered with hysteresis, so standing on the boundary does not turn
+   * the animal into an alarm.
+   */
+  private notice(animal: Animal, dt: number, listener: Vector3): void {
+    const spec = animal.gait?.voice?.notice;
+    if (!spec || !this.voice) return;
+    animal.noticeTimer -= dt;
+    const dx = listener.x - animal.object.position.x;
+    const dz = listener.z - animal.object.position.z;
+    const distance = Math.hypot(dx, dz);
+
+    if (animal.noticed) {
+      if (distance > spec.radius + NOTICE_HYSTERESIS) animal.noticed = false;
+      return;
+    }
+    if (distance > spec.radius) return;
+    animal.noticed = true;
+    if (animal.noticeTimer > 0) return;
+    animal.noticeTimer = this.rng.range(spec.cooldown[0], spec.cooldown[1]);
+    this.say(animal, spec.call);
+    // Whatever it was about to say on its own, it has said something now.
+    const voice = animal.gait?.voice;
+    if (voice) {
+      animal.voiceTimer = Math.max(animal.voiceTimer, this.rng.range(voice.gap[0], voice.gap[1]) * 0.6);
+    }
+  }
+
+  /** Make one animal speak now - the cow answering a sale, for instance. */
+  callOut(object: Object3D, call?: string): void {
+    const animal = this.animals.find((entry) => entry.object === object);
+    const voice = animal?.gait?.voice;
+    if (!animal || !voice) return;
+    animal.noticeTimer = Math.max(animal.noticeTimer, 1.5);
+    this.say(animal, call ?? voice.calls[0]);
+  }
+
+  private say(animal: Animal, sound: string): void {
+    if (!this.voice) return;
     animal.object.getWorldPosition(this.worldPoint);
-    this.voice(voice.sound, this.worldPoint);
+    this.voice(sound, this.worldPoint, animal.pitch);
   }
 
   /** Turn one animal to face a world point, for the cow at the trough. */
