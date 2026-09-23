@@ -112,11 +112,15 @@ changes is the scale of the numbers and the light you are working in.
 | **~** | Admin console |
 | **F3** | Performance readout |
 
-The four panels also live on an action rail down the right of the HUD, which
-is what gives a phone - where there is no B key - a shop at all.
-
-On a phone: left half of the screen is a movement stick, right half looks and
-digs.
+On a phone: the left half of the screen is a movement stick and the right half
+looks and digs. That covers walking and pulling hay, and nothing else - so
+every keyboard verb a phone cannot reach has something to tap instead. The
+four panels live on an action rail down the right of the HUD, which is what
+gives a phone a shop at all; the rail also carries the pause button; the
+interaction prompt under the crosshair is a button, because it is the only
+thing on screen that says "sell"; and the tool read-out in the corner is the
+tool button. All of them go through the same paths the keys do, and all of
+them work with a mouse as well.
 
 ### The admin console
 
@@ -126,6 +130,10 @@ percentage, fly through walls, surface the needle, swap the lighting. Its
 buttons and its command line run the same verbs, and it talks to the game
 through one interface (`DevApi`), so no gameplay code carries an
 `if (devMode)`.
+
+It is not in the Yandex Games build - see below - where a reachable developer
+console counts as both technical text and a cheat. It is in the public web
+build, which is where it earns its keep.
 
 ---
 
@@ -234,12 +242,44 @@ pile is bound by total instance count, so moving instances from *everywhere* to
   a handful of shared materials with a stylised rim light and wind sway patched
   in. No textures anywhere.
 - **Adaptive resolution.** The renderer scales its internal resolution to hold
-  the frame budget before it asks the player to turn anything off.
+  the frame budget before it asks the player to turn anything off, and gives up
+  a whole quality tier when that is not enough.
 - **Procedural audio.** Every sound is synthesised at runtime with the Web Audio
   API — filtered noise bursts for hay, FM for anything metallic, a lookahead
-  scheduler for a slow generative music bed. Zero bytes of audio ship.
+  scheduler for a generative music bed. Zero bytes of audio ship.
+- **A farmyard that answers you.** Two calls per species, deliberately opposite
+  shapes, because the third identical moo is the one the ear stops believing;
+  a fixed pitch per individual animal, so five hens are five hens rather than
+  one hen that cannot make up its mind; and a call when the player walks up,
+  which is the half of it a player actually connects to the animal in front of
+  them. The cow at the trough moos when you feed it.
+- **A key per scene.** Four chords is twenty-six seconds and a player is on one
+  haystack for eight minutes, so each scene has its own chord set and
+  pentatonic, swapped in at the next chord when you travel. The melody walks
+  rather than being drawn from the scale — uniform random over a pentatonic
+  never sounds wrong, but it sounds like a wind chime, because a tune is mostly
+  steps with the occasional leap.
 - **Versioned saves.** The save file is treated like a database schema, with
   migrations. A file that cannot be migrated is archived, never discarded.
+
+### Quality, and climbing down from it
+
+Nothing in a frame of this game waits on the CPU - simulation and frame update
+together measure about 0.1 ms. So the starting quality tier is not chosen from
+`deviceMemory` and `hardwareConcurrency`, which describe the CPU and were
+handing Ultra to desktops with integrated graphics on the strength of their
+RAM. The renderer string gets a veto: a software rasteriser starts at the
+bottom and an integrated GPU is capped at medium.
+
+When frames still run long, resolution scales first, because it is the only
+lever with no visual discontinuity. But that only helps a renderer short of
+fill rate, and a weak GPU is just as often short of vertex throughput or
+shadow budget - so after six seconds pinned at the resolution floor the engine
+gives up a whole tier and hands the resolution back. Ultra to high to medium
+to low, each step dropping the pixel ratio, the shadow map, bloom and the
+straw budget: 521k triangles and 133 draw calls at ultra, 342k and 60 at low,
+with the pile still reading as loose hay. It only ever climbs down, and only
+on "auto".
 
 ### Balance is measured, not guessed
 
