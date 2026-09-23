@@ -97,6 +97,18 @@ export interface UiCallbacks {
   onResetSave(): void;
   /** The HUD's action rail: the same panels the B/J/M keys open. */
   onOpenPanel(panel: HudPanel): void;
+  /**
+   * The three keyboard verbs a phone has no key for.
+   *
+   * Touch had a virtual stick, a look pad and a dig, and that was the whole
+   * interface - so on a phone a player could fill the bag and then had no way
+   * to sell it, no way to pause and no way to change tool. Every one of them
+   * now has something to tap, and the taps go through the same paths the keys
+   * do rather than round the side of them.
+   */
+  onInteract(): void;
+  onPause(): void;
+  onCycleTool(): void;
   /** Fired whenever any modal closes, however it was closed. */
   onCloseModal(): void;
   onSound(name: 'ui_hover' | 'ui_click' | 'ui_open' | 'ui_close'): void;
@@ -142,6 +154,7 @@ const UI_REFERENCE_HEIGHT = 860;
 
 /** Labels on the action rail, in one place so they read as a set. */
 const RAIL_LABELS = {
+  pause: 'Пауза',
   shop: 'Лавка',
   quests: 'Задания',
   records: 'Рекорды',
@@ -460,7 +473,13 @@ export class GameUi {
 
     this.promptKey = el('span.key', { textContent: 'E' });
     this.promptText = el('span.prompt__text', { textContent: '' });
-    this.prompt = el('div.prompt.prompt--hidden', undefined, [this.promptKey, this.promptText]);
+    // A button, not a label: it is the only thing on screen that says "sell",
+    // and on a phone there is no E to press. Tapping it is the same call the
+    // key makes.
+    this.prompt = el('button.prompt.prompt--hidden', {
+      attrs: { type: 'button' },
+      onClick: () => this.cb.onInteract(),
+    }, [this.promptKey, this.promptText]);
 
     this.hud = this.buildHud();
 
@@ -515,6 +534,22 @@ export class GameUi {
   /* ==================================================================== dom */
 
   /** One button on the action rail: a big icon, a label, and the panel it opens. */
+  /** A rail button that runs something other than opening a panel. */
+  private actionButton(icon: string, label: string, modifier: string, run: () => void): HTMLElement {
+    const button = el(`button.rail-btn.rail-btn--${modifier}`, {
+      attrs: { type: 'button', 'aria-label': label },
+      onClick: () => {
+        this.cb.onSound('ui_click');
+        run();
+      },
+    }, [
+      el('span.rail-btn__icon', { textContent: icon, attrs: { 'aria-hidden': 'true' } }),
+      el('span.rail-btn__label', { textContent: label }),
+    ]);
+    button.addEventListener('pointerenter', () => this.cb.onSound('ui_hover'));
+    return button;
+  }
+
   private railButton(panel: HudPanel, icon: string, label: string, modifier: string): HTMLElement {
     const button = el(`button.rail-btn.rail-btn--${modifier}`, {
       attrs: { type: 'button', 'aria-label': label },
@@ -556,13 +591,19 @@ export class GameUi {
       this.railButton('quests', '📋', RAIL_LABELS.quests, 'quests'),
       this.railButton('records', '🏆', RAIL_LABELS.records, 'records'),
       this.railButton('travel', '🗺️', RAIL_LABELS.travel, 'travel'),
+      this.actionButton('⏸', RAIL_LABELS.pause, 'pause', () => this.cb.onPause()),
     ]);
+
+    // The tool chip was a read-out. It is now the tool *button*, because
+    // cycling tools was on the number row and a phone does not have one.
+    const toolButton = el('button.hud__tool', {
+      attrs: { type: 'button', 'aria-label': 'Следующий инструмент' },
+      onClick: () => this.cb.onCycleTool(),
+    }, [this.toolIcon, this.toolName, this.toolCount]);
 
     const bottomRight = el('div.hud__bottom-right', undefined, [
       this.hunchPanel,
-      el('div.hud__panel', undefined, [
-        el('div.hud__tool', undefined, [this.toolIcon, this.toolName, this.toolCount]),
-      ]),
+      el('div.hud__panel.hud__panel--tool', undefined, [toolButton]),
     ]);
 
     // The crosshair and prompt are children of `.hud` rather than of their own

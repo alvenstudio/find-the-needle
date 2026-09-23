@@ -144,6 +144,8 @@ export class Game {
   private lastAdAt = -Infinity;
   /** Raised while travelling, so a platform pause does not fight the handover. */
   private inTransition = false;
+  /** Raised for the whole of a travel, so a second button press is ignored. */
+  private travelling = false;
   private interactions: InteractionSystem;
   private dig: DigSystem | null = null;
   /** Detaches the pile's ground sampler; see `openStack`. */
@@ -223,6 +225,11 @@ export class Game {
       onSettingChanged: (key, value) => this.applySetting(key, value),
       onResetSave: () => this.resetSave(),
       onOpenPanel: (panel) => this.openPanel(panel),
+      onInteract: () => {
+        if (this.state === 'playing') this.interactions.activate();
+      },
+      onPause: () => this.setPaused(true),
+      onCycleTool: () => this.run?.cycleTool(1),
       onCloseModal: () => this.onModalClosed(),
       onSound: (name) => this.audio.play(name),
       rewardedAvailable: () => hasSDK() && !isTV(),
@@ -930,11 +937,24 @@ export class Game {
   }
 
   private async travelTo(index: number): Promise<void> {
+    // Travel now yields - there may be an advert between the button and the
+    // new yard - so a second press has to be ignored rather than opening a
+    // second stack on top of the first.
+    if (this.travelling) return;
     const target = TIERS[Math.max(0, Math.min(index, TIERS.length - 1))];
     if (!this.meta.isTierUnlocked(index)) {
       this.audio.play('denied');
       return;
     }
+    this.travelling = true;
+    try {
+      await this.doTravel(target);
+    } finally {
+      this.travelling = false;
+    }
+  }
+
+  private async doTravel(target: TierDefinition): Promise<void> {
     this.ui.closeModal();
     this.ui.hideSummary();
 

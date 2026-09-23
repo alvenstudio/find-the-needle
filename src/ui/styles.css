@@ -1628,6 +1628,9 @@ p {
 .rail-btn--tools { background: #7e48e5; }
 .rail-btn--quests { background: #3a93cf; }
 .rail-btn--travel { background: #46a35a; }
+/* Grey, so the one button that stops the game does not read as another
+   place to spend money. */
+.rail-btn--pause { background: #6b737d; }
 
 /* A count of claimable jobs, in the corner of its button. */
 .rail-btn__badge {
@@ -1673,12 +1676,29 @@ p {
   pointer-events: auto;
 }
 
+/* Also the tool *button*: cycling tools lived on the number row, and a phone
+   does not have one. On a desktop it is a second way to do what Q does. */
 .hud__tool {
   display: flex;
   gap: var(--s3);
   align-items: center;
+  padding: 0;
+  font-family: inherit;
   font-size: var(--t-md);
   font-weight: var(--w-black);
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hud__panel--tool {
+  pointer-events: auto;
+}
+
+.hud__tool:active {
+  translate: 0 1px;
 }
 
 .hud__tool-icon {
@@ -1715,7 +1735,23 @@ p {
      with `transform` instead of competing with it. */
   translate: -50% 0;
   animation: ftn-pop var(--dur-pop) var(--ease-back);
-  pointer-events: none;
+  /* It is a real button now, because a phone has no E to press and this is
+     the only thing on screen that says "sell". Inheriting the font matters:
+     a bare <button> would otherwise drop out of the UI's type scale. */
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.prompt:active {
+  translate: -50% 1px;
+  box-shadow: var(--sh-1), var(--sh-top);
+}
+
+/* Nothing to interact with is not a thing to press. */
+.prompt--blocked {
+  cursor: default;
 }
 
 .prompt--hidden {
@@ -2678,6 +2714,9 @@ p {
        on a 300px card eats the corners of the content. */
     --r-xl: 16px;
     --r-lg: 14px;
+    /* Width of the action rail plus its gutter, for anything that has to keep
+       out of its way. */
+    --rail-strip: 156px;
   }
 
   /* The right corner only ever holds the menu button, so the currency chips
@@ -2703,6 +2742,20 @@ p {
 
   .rail-btn__label {
     min-width: 4.5em;
+  }
+
+  /* The rail owns the right-hand strip on a phone, and the prompt is centred
+     on the whole screen - so at 375 px "Продать сено" sat underneath the
+     travel button, which is both unreadable and a tap that could go to either
+     of them. The prompt centres in what is left instead. */
+  .prompt {
+    left: calc((100% - var(--rail-strip)) / 2);
+    max-width: calc(100% - var(--rail-strip) - var(--s6));
+  }
+
+  .prompt__text {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .hud__top-right {
