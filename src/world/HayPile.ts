@@ -455,6 +455,23 @@ export class HayPile {
     this.cellOffset[cellCounts.length] = running;
   }
 
+  /**
+   * Draw fewer band straws, without rebuilding the pile.
+   *
+   * For the engine demoting its quality tier part-way through a stack. The
+   * band is the most expensive object in the scene and its straws are in no
+   * particular order, so keeping the first N is a uniform thinning rather
+   * than a bald patch on one side.
+   */
+  setBandBudget(max: number): void {
+    const band = this.band;
+    if (!band) return;
+    const next = Math.max(0, Math.min(this.bandOffsetX.length, Math.floor(max)));
+    if (next === band.count) return;
+    band.count = next;
+    this.rebuildBand();
+  }
+
   /** Pre-roll the band's relative offsets and orientations once. */
   private scatterBand(rng: Rng): void {
     const band = this.band;
@@ -482,7 +499,7 @@ export class HayPile {
     const originZ = this.bandAnchor.z - this.group.position.z;
     const baseY = this.group.position.y;
 
-    for (let i = 0; i < this.bandOffsetX.length; i++) {
+    for (let i = 0; i < band.count; i++) {
       const x = originX + this.bandOffsetX[i];
       const z = originZ + this.bandOffsetZ[i];
       const height = this.field.heightAt(x, z);

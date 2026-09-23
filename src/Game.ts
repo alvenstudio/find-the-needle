@@ -234,6 +234,13 @@ export class Game {
     this.applyAllSettings();
     this.engine.fixedUpdate.on((dt) => this.fixedUpdate(dt));
     this.engine.frameUpdate.on((dt) => this.frameUpdate(dt));
+    // A tier change re-sizes the buffers and rebuilds the composer by itself,
+    // but the straw budgets are baked into the pile when the stack is opened.
+    // Thinning the band is the one part worth doing without waiting for the
+    // next stack: it is the most expensive object in the scene.
+    this.engine.qualityChanged.on(() => {
+      this.pile?.setBandBudget(this.engine.settings.bandBudget);
+    });
     this.bindInput();
   }
 
@@ -1031,6 +1038,9 @@ export class Game {
     this.audio.setSfxVolume(settings.sfxVolume);
     this.audio.setMusic(settings.musicVolume > 0);
     this.screen.intensity = settings.reducedMotion ? 0.25 : 1;
+    // Only "auto" lets the engine overrule itself when frames run long. A
+    // player who picked Ultra and meant it keeps Ultra, slow or not.
+    this.engine.adaptiveQuality = settings.quality === 'auto';
     if (settings.quality !== 'auto') this.engine.setQuality(settings.quality as QualityTier);
   }
 

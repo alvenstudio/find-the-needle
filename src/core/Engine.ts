@@ -90,6 +90,26 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
   },
 };
 
+/** How far adaptive resolution is allowed to go before it stops helping. */
+const RESOLUTION_FLOOR = 0.62;
+
+/**
+ * How long frames must stay long at the resolution floor before the engine
+ * gives up a whole quality tier.
+ *
+ * Long enough that loading a new stack, an advert or a browser hiccup cannot
+ * trigger it; short enough that a player on a machine that cannot hold sixty
+ * is not left there for a minute.
+ */
+const TIER_DEMOTE_SECONDS = 6;
+
+const LOWER_TIER: Record<QualityTier, QualityTier | null> = {
+  ultra: 'high',
+  high: 'medium',
+  medium: 'low',
+  low: null,
+};
+
 /** Fixed simulation rate. Rendering is decoupled and interpolates between steps. */
 export const FIXED_STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -133,6 +153,16 @@ export class Engine {
   private frameTimeAverage = FIXED_STEP;
   private adaptationCooldown = 0;
   adaptiveResolution = true;
+  /**
+   * Whether the engine may drop its own quality tier when frames stay long.
+   *
+   * Set by the game from the player's Quality setting: only "auto" gives the
+   * engine permission to overrule itself. A player who chose Ultra and meant
+   * it keeps Ultra.
+   */
+  adaptiveQuality = true;
+  /** Seconds spent slow at the resolution floor, before stepping the tier. */
+  private slowAtFloor = 0;
 
   /** Smoothed frames per second, for the debug overlay. */
   fps = 60;
@@ -263,13 +293,42 @@ export class Engine {
   private adapt(delta: number): void {
     if (!this.adaptiveResolution) return;
     this.adaptationCooldown -= delta;
-    if (this.adaptationCooldown > 0) return;
 
     const target = FIXED_STEP;
     const slow = this.frameTimeAverage > target * 1.35;
     const fast = this.frameTimeAverage < target * 0.82;
+
+    // How long we have been slow with nothing left to give is counted every
+    // frame, not every time the cooldown lapses: the cooldown is there to stop
+    // the resolution oscillating, and letting it gate this clock as well made
+    // six seconds of patience take a minute and a half to elapse.
+    if (slow && this.resolutionScale <= RESOLUTION_FLOOR + 1e-3) this.slowAtFloor += delta;
+    else if (!slow) this.slowAtFloor = 0;
+
+    if (this.adaptationCooldown > 0) return;
+
+    // Resolution is the first lever because it is the only one with no visual
+    // discontinuity. But it only helps a renderer that is short of fill rate,
+    // and a weak GPU is just as often short of vertex throughput or shadow
+    // budget - in which case the frame stays long all the way down to the
+    // floor and the picture is soft for nothing. So when the floor has been
+    // held for several seconds and frames are still long, step the whole tier
+    // down and hand the resolution back.
+    if (this.adaptiveQuality && this.slowAtFloor >= TIER_DEMOTE_SECONDS) {
+      const lower = LOWER_TIER[this.tier];
+      if (lower) {
+        this.slowAtFloor = 0;
+        this.setQuality(lower);
+        // Give the new tier a fair hearing rather than judging it on the
+        // average the old one poisoned.
+        this.frameTimeAverage = FIXED_STEP;
+        this.adaptationCooldown = 2;
+        return;
+      }
+    }
+
     let next = this.resolutionScale;
-    if (slow) next = Math.max(0.62, this.resolutionScale - 0.08);
+    if (slow) next = Math.max(RESOLUTION_FLOOR, this.resolutionScale - 0.08);
     else if (fast) next = Math.min(1, this.resolutionScale + 0.04);
 
     if (Math.abs(next - this.resolutionScale) > 0.001) {
@@ -348,9 +407,56 @@ export function detectQualityTier(): QualityTier {
   const coarsePointer = matchMedia('(pointer: coarse)').matches;
   const smallScreen = Math.min(window.innerWidth, window.innerHeight) < 720;
 
-  if (coarsePointer && smallScreen) return memory >= 6 && cores >= 6 ? 'medium' : 'low';
-  if (memory >= 8 && cores >= 12) return 'ultra';
-  if (memory >= 8 && cores >= 8) return 'high';
-  if (memory >= 4 && cores >= 4) return 'medium';
-  return 'low';
+  let tier: QualityTier;
+  if (coarsePointer && smallScreen) tier = memory >= 6 && cores >= 6 ? 'medium' : 'low';
+  else if (memory >= 8 && cores >= 12) tier = 'ultra';
+  else if (memory >= 8 && cores >= 8) tier = 'high';
+  else if (memory >= 4 && cores >= 4) tier = 'medium';
+  else tier = 'low';
+
+  // RAM and core count describe the CPU, and nothing in this frame is waiting
+  // on the CPU. A desktop with thirty-two gigabytes, sixteen threads and an
+  // integrated GPU was being handed Ultra - a device pixel ratio of two, 3072
+  // shadow maps and bloom - on the strength of specifications that have
+  // nothing to do with any of them. So the renderer string gets a veto.
+  const gpu = detectGpuClass();
+  if (gpu === 'software') return 'low';
+  if (gpu === 'integrated' && (tier === 'ultra' || tier === 'high')) return 'medium';
+  return tier;
+}
+
+export type GpuClass = 'software' | 'integrated' | 'discrete' | 'unknown';
+
+/**
+ * Classify the GPU from its renderer string.
+ *
+ * Crude, and deliberately so: the only decisions riding on it are "do not
+ * start this machine on Ultra" and "this is a software rasteriser, start at
+ * the bottom", both of which adaptive quality will correct anyway if the
+ * guess is wrong. It reads from a throwaway context and drops it immediately,
+ * because the string is wanted before the real renderer exists.
+ */
+export function detectGpuClass(): GpuClass {
+  let canvas: HTMLCanvasElement | null = null;
+  try {
+    canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    if (!gl) return 'software';
+    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(
+      (debug && gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '',
+    ).toLowerCase();
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    if (!name) return 'unknown';
+    if (/swiftshader|llvmpipe|software|basic render|microsoft basic/.test(name)) return 'software';
+    if (/nvidia|geforce|rtx|gtx|radeon (rx|pro)|\bnavi\b|apple m\d/.test(name)) return 'discrete';
+    if (/intel|uhd graphics|hd graphics|iris|vega \d|mali|adreno|powervr|videocore/.test(name)) {
+      return 'integrated';
+    }
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  } finally {
+    canvas?.remove();
+  }
 }
