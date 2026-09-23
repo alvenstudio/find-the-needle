@@ -1,7 +1,7 @@
 import { Group, Object3D, Vector3 } from 'three';
 
 import type { Assets } from '../core/Assets';
-import { clamp01, smoothstep } from '../core/MathX';
+import { clamp01, damp, smoothstep } from '../core/MathX';
 import { Rng } from '../core/Rng';
 import { Signal } from '../core/Signals';
 import type { HayPile } from '../world/HayPile';
@@ -33,6 +33,14 @@ export interface BuriedItem {
   exposed: boolean;
   /** Seconds since exposure, driving the pop-out and hover animation. */
   age: number;
+  /**
+   * The height the item is hovering over, eased toward the hay beneath it.
+   *
+   * Not the same as `position.y`, which is where it was buried and never
+   * changes. An exposed item has to ride the surface down as the hay under it
+   * goes, or it is left floating at the height the hay used to be.
+   */
+  restY: number;
   object: Object3D | null;
 }
 
@@ -132,6 +140,7 @@ export class BuriedField {
       definition: null,
       model: 'needle',
       claimed: false,
+      restY: 0,
       exposed: false,
       age: 0,
       object: null,
@@ -148,6 +157,7 @@ export class BuriedField {
       definition,
       model: definition.model,
       claimed: false,
+      restY: 0,
       exposed: false,
       age: 0,
       object: null,
@@ -263,10 +273,21 @@ export class BuriedField {
       const bob = Math.sin(this.elapsed * 1.9 + item.position.x) * 0.09 * settled;
       const rise = POP_HEIGHT * pop * (1 - 0.35 * settled) + HOVER_HEIGHT * settled;
 
+      // Follow the hay down.
+      //
+      // This used to hover at `max(position.y, surface)` - the height the item
+      // was buried at, for ever. Dig past something with a wide tool and it
+      // was left hanging in mid-air where the hay used to be, and the collect
+      // radius is 2.1 m: a needle stranded three metres up over a cleared
+      // crater could not be picked up at all, and the run could not be
+      // finished. Easing rather than snapping, because a late-game tool takes
+      // a metre of hay in one bite and the item should sink with it rather
+      // than drop through the floor and back.
       const surface = Math.max(field.heightAt(item.position.x, item.position.z), 0);
+      item.restY = damp(item.restY, surface, 6, dt);
       object.position.set(
         item.position.x + this.pile.group.position.x,
-        this.pile.group.position.y + Math.max(item.position.y, surface) + rise + bob,
+        this.pile.group.position.y + item.restY + rise + bob,
         item.position.z + this.pile.group.position.z,
       );
       object.rotation.y += dt * (item.kind === 'needle' ? 1.15 : 0.85);
@@ -290,6 +311,7 @@ export class BuriedField {
   private expose(item: BuriedItem): void {
     item.exposed = true;
     item.age = 0;
+    item.restY = item.position.y;
     if (this.assets.has(item.model)) {
       const object = this.assets.instantiate(item.model);
       object.matrixAutoUpdate = false;

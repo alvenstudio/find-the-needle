@@ -441,7 +441,12 @@ export function detectGpuClass(): GpuClass {
   try {
     canvas = document.createElement('canvas');
     const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
-    if (!gl) return 'software';
+    // Not being able to make a throwaway context is not evidence of a software
+    // rasteriser - the game has already checked that WebGL 2 works, and
+    // browsers cap how many live contexts a page may hold. Answering
+    // "software" here would pin a perfectly good machine to the lowest tier
+    // with no way back up but the settings menu.
+    if (!gl) return 'unknown';
     const debug = gl.getExtension('WEBGL_debug_renderer_info');
     const name = String(
       (debug && gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '',
