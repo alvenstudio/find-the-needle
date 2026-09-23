@@ -2243,27 +2243,104 @@ interface AmbienceRig {
 /* ------------------------------------------------------------------ music */
 
 /**
- * Four chords, sixteen eighth-notes each, looping. Warm and rootless enough
- * that the melody can wander without ever clashing: an A minor 9 falling to an
- * F major 9, a C 6/9 and an E minor 7. Nothing resolves hard, which is what
- * keeps a bed like this from demanding attention every eight bars.
+ * One key: four chords of sixteen eighth-notes, and a scale to improvise over.
+ *
+ * Every chord is voiced rootless-ish and open, and every scale is a pentatonic
+ * whose notes are consonant against all four of its chords - which is precisely
+ * why generative music reaches for pentatonics. There is no wrong note to
+ * avoid, so the scheduler can pick freely and never sound broken.
  */
-const MUSIC_CHORDS: readonly (readonly number[])[] = [
-  [45, 52, 55, 60, 64],
-  [41, 48, 52, 57, 60],
-  [48, 55, 57, 62, 64],
-  [40, 52, 55, 59, 62],
-];
+interface MusicKey {
+  chords: readonly (readonly number[])[];
+  scale: readonly number[];
+  /** Plucked counter-line density, 0..1. Sparse at night, busy at noon. */
+  pluck: number;
+}
 
 /**
- * A minor pentatonic. Every note in it is consonant against all four chords,
- * which is precisely why generative music reaches for pentatonics - there is no
- * wrong note to avoid, so the scheduler can pick freely and never sound broken.
+ * A key per scene.
+ *
+ * One progression for the whole game is the thing that wears a bed like this
+ * out: four chords is twenty-six seconds, and a player is on one haystack for
+ * eight minutes. Tying the key to the scene means arriving at a new stack
+ * actually sounds like arriving somewhere, and it costs nothing - the mood is
+ * already set on travel for the sky and the ambience.
  */
-const MUSIC_SCALE: readonly number[] = [57, 60, 62, 64, 67, 69, 72, 74];
+const MUSIC_KEYS: Record<AmbienceMood, MusicKey> = {
+  // Open and major, with a suspended fourth chord that never quite lands.
+  noon: {
+    chords: [
+      [48, 55, 59, 62, 64],
+      [41, 48, 55, 57, 60],
+      [45, 52, 55, 60, 64],
+      [43, 50, 55, 60, 62],
+    ],
+    scale: [60, 62, 64, 67, 69, 72, 74, 76],
+    pluck: 0.5,
+  },
+  // The original: an A minor 9 falling to an F major 9, a C 6/9 and an E minor
+  // 7. Nothing resolves hard, which is what keeps it from demanding attention.
+  golden: {
+    chords: [
+      [45, 52, 55, 60, 64],
+      [41, 48, 52, 57, 60],
+      [48, 55, 57, 62, 64],
+      [40, 52, 55, 59, 62],
+    ],
+    scale: [57, 60, 62, 64, 67, 69, 72, 74],
+    pluck: 0.38,
+  },
+  // D minor, and a fourth voiced low. Muted rather than sad.
+  overcast: {
+    chords: [
+      [38, 45, 50, 53, 57],
+      [46, 53, 57, 60, 62],
+      [41, 48, 53, 57, 60],
+      [43, 50, 53, 58, 62],
+    ],
+    scale: [62, 65, 67, 69, 72, 74, 77, 79],
+    pluck: 0.26,
+  },
+  // Low and minor. The melody sits in the middle of the piano rather than the
+  // top of it, so the thunder has the top of the spectrum to itself.
+  storm: {
+    chords: [
+      [40, 47, 52, 55, 59],
+      [36, 48, 52, 55, 59],
+      [45, 52, 57, 60, 64],
+      [47, 54, 57, 62, 66],
+    ],
+    scale: [52, 55, 57, 59, 62, 64, 67, 69],
+    pluck: 0.18,
+  },
+  // Wide, low voicings and almost no counter-line: at night the crickets are
+  // the rhythm section.
+  night: {
+    chords: [
+      [45, 52, 57, 59, 64],
+      [38, 50, 53, 57, 60],
+      [41, 48, 52, 57, 60],
+      [40, 47, 52, 55, 59],
+    ],
+    scale: [45, 48, 50, 52, 55, 57, 60, 62],
+    pluck: 0.12,
+  },
+  // G major with a raised fourth in the last chord - the one bright interval
+  // in the set, and it belongs to sunrise.
+  dawn: {
+    chords: [
+      [43, 50, 54, 59, 62],
+      [38, 50, 54, 57, 64],
+      [40, 47, 54, 59, 62],
+      [36, 48, 55, 59, 66],
+    ],
+    scale: [55, 59, 62, 64, 67, 69, 71, 74],
+    pluck: 0.44,
+  },
+};
 
 const MUSIC_STEPS_PER_CHORD = 16;
-const MUSIC_LOOP_STEPS = MUSIC_STEPS_PER_CHORD * MUSIC_CHORDS.length;
+const MUSIC_LOOP_STEPS = MUSIC_STEPS_PER_CHORD * 4;
 
 /* ------------------------------------------------------------- held loops */
 
@@ -2358,6 +2435,9 @@ export class AudioSystem {
   private musicStep = 0;
   private musicNextStep = 0;
   private lastMelodyNote = -1;
+  private musicKey: MusicKey = MUSIC_KEYS.noon;
+  /** Set on travel, swapped in at the next chord so nothing clashes. */
+  private pendingKey: MusicKey | null = null;
 
   private loop: LoopRig | null = null;
   private loopActive = false;
@@ -2931,6 +3011,10 @@ export class AudioSystem {
   setAmbience(mood: AmbienceMood): void {
     if (mood === this.currentMood) return;
     this.currentMood = mood;
+    // The key changes at the next chord, not this instant: swapping chords
+    // under a ringing pad is the one way to make this sound like a mistake.
+    const key = MUSIC_KEYS[mood];
+    if (key !== this.musicKey) this.pendingKey = key;
     // Snapshot where the blend actually is, so a mood change part-way through
     // another one continues from the current sound rather than snapping back.
     const t = this.moodBlend;
@@ -3117,9 +3201,21 @@ export class AudioSystem {
   private musicStepAt(g: AudioGraph, step: number, when: number): void {
     const inLoop = step % MUSIC_LOOP_STEPS;
     const chordIndex = Math.floor(inLoop / MUSIC_STEPS_PER_CHORD);
-    const chord = MUSIC_CHORDS[chordIndex];
     const stepInChord = inLoop % MUSIC_STEPS_PER_CHORD;
     const phrase = Math.floor(step / MUSIC_LOOP_STEPS);
+
+    // At the next chord, not the top of the loop: a loop is nearly half a
+    // minute, and a player who has just walked through the gate should not
+    // spend that long listening to where they used to be. All four chords of a
+    // key sit together, so entering the new one at chord three is no worse
+    // than entering it at chord one.
+    if (stepInChord === 0 && this.pendingKey) {
+      this.musicKey = this.pendingKey;
+      this.pendingKey = null;
+      this.lastMelodyNote = -1;
+    }
+    const key = this.musicKey;
+    const chord = key.chords[chordIndex];
 
     if (stepInChord === 0) {
       this.musicPad(g, chord, when);
@@ -3130,25 +3226,92 @@ export class AudioSystem {
     // that plays continuously stops being background within ten minutes; the
     // silences are what make it liveable for an hour.
     const breathing = phrase % 4 === 3;
+
+    // A phrase has a shape: it opens quietly, fills out in the middle and
+    // thins again at the end. Without this the note density is flat, and flat
+    // density is what makes generative music sound like a wind chime.
+    const through = inLoop / MUSIC_LOOP_STEPS;
+    const arc = 0.55 + 0.45 * Math.sin(through * Math.PI);
+
+    // The plucked counter-line: chord tones on the off-beats, under the
+    // melody, wide in the stereo field. It is what gives the bed a pulse
+    // without putting a drum in a farmyard.
+    if (!breathing && stepInChord % 2 === 1 && random() < key.pluck * arc) {
+      const note = chord[randInt(1, chord.length - 1)] + (random() < 0.3 ? 12 : 0);
+      this.musicPluck(g, note, when, randRange(0.22, 0.4) * arc);
+    }
+
     const onBeat = stepInChord % 2 === 0;
     let restChance = onBeat ? 0.34 : 0.62;
     if (breathing) restChance = 0.9;
+    restChance = clamp(1 - (1 - restChance) * arc, 0, 0.97);
     if (random() < restChance) return;
 
-    const scale = MUSIC_SCALE;
-    let index = randInt(0, scale.length - 1);
-    // Never let the same degree repeat immediately; step off it instead. This
-    // one rule does more for the illusion of melody than any amount of extra
-    // randomness.
-    if (index === this.lastMelodyNote) {
-      index = (index + (random() < 0.5 ? 1 : scale.length - 1)) % scale.length;
-    }
-    this.lastMelodyNote = index;
-
+    const scale = key.scale;
+    const index = this.nextMelodyDegree(scale.length);
     const roll = random();
     const octave = roll < 0.1 ? -12 : roll > 0.88 ? 12 : 0;
-    const velocity = clamp(randRange(0.3, 0.65) * (stepInChord % 4 === 0 ? 1.15 : 0.85), 0.1, 1);
+    const velocity = clamp(
+      randRange(0.3, 0.65) * (stepInChord % 4 === 0 ? 1.15 : 0.85) * arc,
+      0.1,
+      1,
+    );
     this.musicNote(g, scale[index] + octave, when, velocity);
+  }
+
+  /**
+   * Pick the next melody degree as a walk, not a draw.
+   *
+   * Uniform random over a pentatonic never sounds wrong, but it never sounds
+   * like a melody either - it sounds like a wind chime, because a melody is
+   * mostly steps with the occasional leap, and uniform sampling makes every
+   * interval equally likely. Walking with an occasional leap, and leaning back
+   * toward the middle of the range at the edges, is the whole trick.
+   */
+  private nextMelodyDegree(length: number): number {
+    const last = this.lastMelodyNote;
+    if (last < 0) {
+      this.lastMelodyNote = randInt(1, Math.max(1, length - 2));
+      return this.lastMelodyNote;
+    }
+    const leap = random() < 0.16;
+    const size = leap ? randInt(3, 4) : random() < 0.72 ? 1 : 2;
+    // At the top of the range fall, at the bottom rise; in the middle, toss up.
+    const bias = (last - (length - 1) / 2) / ((length - 1) / 2);
+    const down = random() < 0.5 + bias * 0.4;
+    let index = last + (down ? -size : size);
+    if (index < 0 || index > length - 1) index = last - (down ? -size : size);
+    index = clamp(index, 0, length - 1);
+    if (index === last) index = last > 0 ? last - 1 : last + 1;
+    this.lastMelodyNote = index;
+    return index;
+  }
+
+  /**
+   * One plucked note: a struck string, not a synth pad.
+   *
+   * The transient is the whole sound. A triangle with a short decay is a
+   * marimba; the same triangle with a click of band-passed noise on the front
+   * is a plucked string, and it costs one extra node.
+   */
+  private musicPluck(g: AudioGraph, midi: number, when: number, velocity: number): void {
+    const voice = this.spawn(g, 'music', 0.09 * velocity, { pan: randRange(-0.55, 0.55) }, 0.3, true);
+    if (!voice) return;
+    const p = new Patch(g, when, voice, 1, velocity);
+    const freq = midiToFreq(midi);
+    const amp = p.gain(0);
+    const end = adEnvelope(amp.gain, when, 0.9, 0.004, 0.55);
+    const filter = p.biquad('lowpass', lerp(1600, 3400, velocity), 1.1);
+    const body = p.osc('triangle', freq, when, end + 0.02);
+    body.connect(filter);
+    const partial = p.osc('sine', freq * 2, when, when + 0.18);
+    const partialTrim = p.gain(0.18);
+    partial.connect(partialTrim);
+    partialTrim.connect(filter);
+    filter.connect(amp);
+    amp.connect(p.out);
+    burst(p, { freq: freq * 3, q: 2.4, level: 0.1 * velocity, attack: 0.001, decay: 0.03 });
+    voice.endTime = end + 0.1;
   }
 
   /** One arpeggio note: sine body, detuned triangle for edge, long release. */
