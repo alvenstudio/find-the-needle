@@ -13,9 +13,12 @@ import type { ToolDefinition } from './Content';
  * turning speed, walking speed, the exact moment a swing lands. A handful of
  * eased curves driven by live state does all of it and costs nothing.
  *
- * ORIENTATION: the Blender viewmodels point along -Y, which the glTF Y-up
- * conversion turns into +Z. The camera looks down -Z, so the holder is spun
- * half a turn to point the tool away from the player.
+ * ORIENTATION: the Blender viewmodels point along +Y, which the glTF Y-up
+ * conversion turns into -Z, and the holder is then spun half a turn - so a
+ * model's own forward axis ends up pointing back at the camera and every pose
+ * has to turn it round again. That is not a nice convention, but it is baked
+ * into the numbers below for every tool, so it stays; the poses are tuned
+ * against what is on screen, not derived.
  */
 
 export interface ViewmodelPose {
@@ -26,11 +29,16 @@ export interface ViewmodelPose {
 }
 
 const POSES: Record<string, ViewmodelPose> = {
-  // One right hand, held like a hand rather than aimed like a tool. The model
-  // sits at +x in its own space and the holder is spun half a turn, so the
-  // pose has to carry it back past the centre; the yaw turns the arm inward so
-  // the glove reads against the frame instead of hiding behind its own cuff.
-  hands: { position: new Vector3(0.27, -0.2, -0.4), rotation: new Euler(-0.44, 0.58, 0.16), scale: 1 },
+  // One right hand, held like a hand rather than aimed like a tool.
+  //
+  // The yaw is most of a half turn because it has to undo the holder's: with
+  // the old 0.58 the arm came into the frame knuckles-first, the sleeve ran
+  // away toward the centre of the screen, and what the player actually saw
+  // was a red-and-cream baton lying across the bottom-right corner with the
+  // hand itself off the edge of it. Now the sleeve leaves the frame at the
+  // corner and the fist points up and inboard, which is where a hand is when
+  // you are reaching into something.
+  hands: { position: new Vector3(0.21, -0.22, -0.49), rotation: new Euler(0.7, -2.82, 0.04), scale: 1.18 },
   pitchfork: { position: new Vector3(0.19, -0.34, -0.52), rotation: new Euler(-0.5, 0.24, 0.16), scale: 0.92 },
   rake: { position: new Vector3(0.2, -0.36, -0.5), rotation: new Euler(-0.52, 0.26, 0.14), scale: 0.92 },
   leaf_blower: { position: new Vector3(0.24, -0.3, -0.46), rotation: new Euler(-0.1, 0.2, 0.06), scale: 0.95 },

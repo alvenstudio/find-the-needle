@@ -176,107 +176,99 @@ def recentre(obj, point):
 # ---------------------------------------------------------------------------
 # hands
 # ---------------------------------------------------------------------------
-FINGER_GAP = 0.004
+# Square cross-section of the sleeve.  A forearm is not round in this idiom -
+# it is a post - and 9 cm is the width that still reads as an arm rather than
+# a plank once the 74-degree field of view has squashed it into the corner.
+FOREARM = 0.090
+FIST = 0.104
 
 
 def build_hand(side, suffix):
-    """One gloved mitten hand with a rolled plaid sleeve.
+    """One blocky arm: sleeve, cuff, fist and thumb.  Four boxes, hard edges.
 
-    Proportions are Roblox-chunky on purpose: a block of three fingers plus a
-    separate thumb reads as a hand from inside a first-person camera far better
-    than five modelled digits ever would at this size. The forearm is cut short
-    because the viewmodel only ever shows the last hand's width of it.
+    Built to the Minecraft rule - whole boxes, no bevel, no modelled fingers.
+    The old hand was a bevelled mitten with three separate digits, and at
+    viewmodel distance that is not read as a hand: the bevels round every
+    silhouette the eye uses to tell arm from object, and the finger gaps are
+    below a pixel.  Four hard-edged boxes read as an arm because a hard edge
+    survives the downscale and a rounded one does not.  It is also 48 triangles
+    instead of 908.
+
+    Fingers along +Y, sleeve along -Y.  That is the file's convention - grip at
+    the origin, business end forward - and for a hand the business end is the
+    knuckles.  The previous build had this exactly backwards, pointing the
+    sleeve into the screen and the fingertips at the camera, which is why the
+    hand showed up as a red baton lying across the bottom of the frame with
+    the actual hand off the edge of it: there is no pose that fixes an arm
+    coming out of the screen the wrong way round.
+
+    ``side`` is +1 for a right hand.  It only moves the thumb, which is the one
+    part that is not symmetric.
     """
     parts = []
-    x = HAND_SPAN * 0.5 * side
 
-    forearm = cube(f"Forearm{suffix}", size=(0.094, 0.175, 0.094), loc=(x, 0.088, -0.010),
-                   color="barn_red")
-    bevel(forearm, 0.012, 2)
-    apply_modifiers(forearm)
-    # Plaid: cream weft bands around the sleeve plus one warp stripe along it.
-    # Bands read from every angle, which a lengthwise stripe alone does not.
-    for centre in (0.045, 0.115):
-        paint(forearm, "barn_trim",
-              faces=select_faces(forearm, lambda c, n, y=centre: abs(n.y) < 0.5 and abs(c.y - y) < 0.017))
-    paint(forearm, shade("barn_red", 0.55),
-          faces=select_faces(forearm, lambda c, n: abs(n.z) > 0.7 and abs(c.x - x) < 0.018))
-    paint(forearm, shade("barn_red", 0.60),
-          faces=select_faces(forearm, lambda c, n: n.z < -0.7
-                             and abs(c.y - 0.045) > 0.017 and abs(c.y - 0.115) > 0.017))
-    parts.append(forearm)
+    # Sleeve.  Long enough to run off the bottom of the frame, so the arm
+    # enters the shot rather than floating in it.
+    sleeve = cube(f"Sleeve{suffix}", size=(FOREARM, 0.250, FOREARM),
+                  loc=(0.0, -0.182, 0.0), color="barn_red")
+    # A darker inner face: with flat shading and one key light, two sides of a
+    # box that meet at 90 degrees can still land on nearly the same value.
+    paint(sleeve, shade("barn_red", 0.78),
+          faces=select_faces(sleeve, lambda c, n: n.x * side < -0.7))
+    paint(sleeve, shade("barn_red", 0.66),
+          faces=select_faces(sleeve, lambda c, n: n.z < -0.7))
+    parts.append(sleeve)
 
-    cuff = cube(f"Cuff{suffix}", size=(0.108, 0.040, 0.108), loc=(x, 0.004, -0.010),
-                color="barn_trim")
-    bevel(cuff, 0.010, 2)
+    # Cuff: a wider band where the sleeve ends, which is what tells the eye
+    # where the sleeve stops and the arm starts.
+    cuff = cube(f"Cuff{suffix}", size=(FOREARM + 0.016, 0.034, FOREARM + 0.016),
+                loc=(0.0, -0.040, 0.0), color="barn_trim")
+    paint(cuff, shade("barn_trim", 0.80),
+          faces=select_faces(cuff, lambda c, n: n.z < -0.7))
     parts.append(cuff)
 
-    # Deliberately long in Y: the cuff and the palm each swallow a few
-    # millimetres of it, or the bevels open a slit that daylight shows through.
-    wrist = cube(f"Wrist{suffix}", size=(0.082, 0.046, 0.082), loc=(x, -0.032, -0.012), color="skin")
-    bevel(wrist, 0.012, 2)
-    parts.append(wrist)
+    # The fist.  One block: Minecraft does not model fingers and neither can
+    # we at this size without it turning back into a lump.
+    fist = cube(f"Fist{suffix}", size=(FIST, 0.118, FIST - 0.008),
+                loc=(0.0, 0.041, 0.0), color="skin")
+    paint(fist, shade("skin", 0.82),
+          faces=select_faces(fist, lambda c, n: n.x * side < -0.7))
+    # Palm side darker than the back of the hand, so the block has a front.
+    paint(fist, shade("skin", 0.72),
+          faces=select_faces(fist, lambda c, n: n.z < -0.7))
+    parts.append(fist)
 
-    palm = cube(f"Palm{suffix}", size=(0.104, 0.125, 0.078), loc=(x, -0.110, -0.014),
-                color="glove")
-    bevel(palm, 0.016, 2)
-    apply_modifiers(palm)
-    # A darker leather palm on the grip side sells the glove.
-    paint(palm, shade("glove", 0.70), faces=select_faces(palm, lambda c, n: n.z < -0.6))
-    parts.append(palm)
-
-    # Three fingers as separate blocks: cheap, and the gaps catch shadow.
-    for i in range(3):
-        offset = (i - 1) * 0.033
-        length = 0.082 - abs(i - 1) * 0.012
-        # Rooted 6 mm inside the palm block; the palm's 0.016 bevel eats a
-        # butt-joint alive.
-        finger = cube(f"Finger{suffix}{i}", size=(0.029, length, 0.058),
-                      loc=(x + offset, -0.166 - length * 0.5, -0.018), color="glove")
-        bevel(finger, 0.011, 2)
-        apply_modifiers(finger)
-        paint(finger, shade("glove", 0.80), faces=select_faces(finger, lambda c, n: n.z < -0.6))
-        paint(finger, shade("glove", 1.08), faces=select_faces(finger, lambda c, n: n.z > 0.6))
-        parts.append(finger)
-
-    thumb = cube(f"Thumb{suffix}", size=(0.037, 0.088, 0.050),
-                 loc=(x - 0.058 * side, -0.138, -0.006),
-                 rot=(0.0, 0.0, math.radians(32 * side)), color="glove")
-    bevel(thumb, 0.013, 2)
+    # Thumb, on the palm side of the fist.  The one asymmetric block, and the
+    # only cue that says which hand this is.
+    thumb = cube(f"Thumb{suffix}", size=(0.034, 0.062, 0.040),
+                 loc=(-0.049 * side, 0.030, -0.012), color="skin")
+    paint(thumb, shade("skin", 0.86),
+          faces=select_faces(thumb, lambda c, n: n.z < -0.7))
     parts.append(thumb)
-
-    knuckles = cube(f"Knuckles{suffix}", size=(0.100, 0.026, 0.030), loc=(x, -0.168, 0.014),
-                    color=shade("glove", 0.86))
-    bevel(knuckles, 0.008, 1)
-    parts.append(knuckles)
 
     return parts
 
 
 def build_hands():
-    """The player's hand: one right hand, toed in and tipped up.
+    """The player's hand: one right hand, built square to the axes.
 
     One, not two.  A pair pointing straight down -Y at a 74-degree field of
     view sits at the very edges of the frame and reads as two disconnected
     lumps rather than as a person's hands, and no first-person pose fixes it
     while both are on screen -- the tools are all held one-handed, so the free
-    hand has nothing to do and nowhere convincing to be.  A single hand,
-    offset to the right of centre, is what the player's own hand looks like
-    when they reach for something, and it halves the model.
+    hand has nothing to do and nowhere convincing to be.
 
-    Angling it puts it where a hand actually is when it is about to grab, and
-    turns the back of the glove toward the camera where the knuckle block and
-    the finger gaps can be seen.  Its origin stays at the world origin, so the
-    hand sits at +x in model space and the viewmodel pose places it.
+    No baked-in tilt either.  The old build rotated the mesh 14 and 15 degrees
+    before export so that the viewmodel pose had to be expressed relative to a
+    crooked model, which made the pose impossible to reason about and is half
+    of why it was never straightened out.  The model is now axis-aligned and
+    every degree of the pose lives in ``Viewmodel``, where it can be tuned
+    against what is actually on screen.
     """
-    hand = join(build_hand(1, "R"), "HandR")
-    place(hand, rot=(math.radians(-14), 0.0, math.radians(-15)))
-    apply_transform(hand)
-
-    hands = join([hand], "Hands")
-    set_origin(hands, (0.0, 0.0, 0.0))
-    report(hands)
-    export_glb(hands, "hands")
+    hand = join(build_hand(1, "R"), "Hands")
+    set_origin(hand, (0.0, 0.0, 0.0))
+    report(hand)
+    export_glb(hand, "hands")
 
 
 # ---------------------------------------------------------------------------
