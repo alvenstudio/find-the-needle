@@ -3,9 +3,7 @@ import {
   DirectionalLight,
   FogExp2,
   HemisphereLight,
-  Matrix4,
   Object3D,
-  Vector3,
   type PerspectiveCamera,
   type Scene,
 } from 'three';
@@ -23,14 +21,15 @@ import { Sky, SKY_PRESETS, cloneSkyPreset, type SkyMood, type SkyPreset } from '
  * bounce-below gradient that hand-painted art fakes, and adding more lights
  * would flatten the silhouettes the models were built for.
  *
- * The interesting work is in the shadow camera, which follows the player in a
- * tight frustum and is snapped to the shadow map's own texel grid. Without that
- * snap, shadow edges crawl and shimmer with every step - the single most
- * distracting artefact in an otherwise clean scene.
+ * The interesting work is in the shadow camera, which is fitted once to the
+ * whole yard rather than following the player around it.
  */
 
-const SHADOW_RADIUS = 26;
-const SHADOW_DEPTH = 190;
+/** Slack around the fitted frustum, so nothing clips at the edge. */
+const SHADOW_MARGIN = 2;
+/** Fallback extent, used until a stack has said how big it is. */
+const DEFAULT_CAST_RADIUS = 60;
+const DEFAULT_CAST_TOP = 24;
 const MOOD_FADE_SECONDS = 2.4;
 
 export class Environment {
@@ -46,9 +45,8 @@ export class Environment {
   private mood: SkyMood = 'noon';
   private fade = 1;
 
-  private readonly lightSpace = new Matrix4();
-  private readonly snapped = new Vector3();
-  private readonly focus = new Vector3();
+  private castRadius = DEFAULT_CAST_RADIUS;
+  private castTop = DEFAULT_CAST_TOP;
   private elapsed = 0;
 
   constructor(private readonly engine: Engine) {
@@ -62,12 +60,6 @@ export class Environment {
 
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.setScalar(engine.settings.shadowMapSize);
-    this.sun.shadow.camera.near = 1;
-    this.sun.shadow.camera.far = SHADOW_DEPTH;
-    this.sun.shadow.camera.left = -SHADOW_RADIUS;
-    this.sun.shadow.camera.right = SHADOW_RADIUS;
-    this.sun.shadow.camera.top = SHADOW_RADIUS;
-    this.sun.shadow.camera.bottom = -SHADOW_RADIUS;
     // A small negative bias plus a normal bias kills acne on the haystack's
     // gentle slopes without producing peter-panning on the props.
     this.sun.shadow.bias = -0.0006;
@@ -105,6 +97,15 @@ export class Environment {
     this.pushPreset();
   }
 
+  /**
+   * How big the stack we are standing in is: a cylinder around the origin
+   * containing everything in it that casts a shadow.
+   */
+  setCastExtent(radius: number, top: number): void {
+    this.castRadius = Math.max(8, radius);
+    this.castTop = Math.max(2, top);
+  }
+
   /** Cross-fade to a new mood over a couple of seconds. */
   setMood(mood: SkyMood): void {
     if (mood === this.mood) return;
@@ -114,7 +115,7 @@ export class Environment {
     this.fade = 0;
   }
 
-  update(dt: number, camera: PerspectiveCamera, focus: Vector3): void {
+  update(dt: number, camera: PerspectiveCamera): void {
     this.elapsed += dt;
 
     if (this.fade < 1) {
@@ -127,7 +128,7 @@ export class Environment {
 
     this.sky.update(this.elapsed, camera);
     advanceSharedUniforms(this.elapsed, this.current.wind);
-    this.updateShadowCamera(focus);
+    this.updateShadowCamera();
 
     // A gentle exposure drift makes moving between tiers feel like the eye
     // adjusting rather than a hard cut.
@@ -157,32 +158,59 @@ export class Environment {
   }
 
   /**
-   * Keep the shadow frustum on the player, snapped to the shadow map's texel
-   * grid so the depth samples land in the same places from frame to frame.
+   * Fit the shadow frustum to the whole yard, and leave it there.
+   *
+   * It used to be a 26 m square that followed the player, snapped to the
+   * shadow map's texel grid to stop the edges crawling. The snap worked; the
+   * following did not. Twenty-six metres from the player does not reach the
+   * tree line - the trees stand from 32 m out, and the yard measures 59 m from
+   * the origin to its farthest caster - so a tree cast a shadow while you were
+   * near it and stopped when you walked away, and a whole hillside switched
+   * its shadows on and off as you crossed the yard.
+   *
+   * Nothing here needs to move. The world is a bounded disc, the player cannot
+   * leave it, and the sun holds one elevation per stack. So the frustum is fitted
+   * to the disc rather than to the player, and it is then simply correct: every
+   * caster is inside it in every frame from every position, which is a stronger
+   * guarantee than snapping could give. It needs no snapping either, because a
+   * projection that never changes samples the same texels every frame by
+   * construction.
+   *
+   * The fit is analytic rather than a loop over corners. The light's right axis
+   * is horizontal, so a disc of radius R needs exactly +-R across it and height
+   * contributes nothing. Its up axis is tilted by the sun's elevation, so the
+   * same disc needs R*sin(elevation) along that axis and a caster of height h
+   * adds h*cos(elevation) - which is why a low sun wants a *shorter* frustum in
+   * that direction, not a longer one.
    */
-  private updateShadowCamera(focus: Vector3): void {
-    this.focus.copy(focus);
-
+  private updateShadowCamera(): void {
     const direction = this.sky.sunVector;
-    this.sun.position.copy(this.focus).addScaledVector(direction, SHADOW_DEPTH * 0.45);
-    this.sunTarget.position.copy(this.focus);
+    const radius = this.castRadius + SHADOW_MARGIN;
+    const half = this.castTop / 2 + SHADOW_MARGIN;
+    // `sunVector` is a unit vector, so its y component is sin(elevation).
+    const sinE = Math.abs(direction.y);
+    const cosE = Math.sqrt(Math.max(0, 1 - sinE * sinE));
 
-    this.sun.updateMatrixWorld(true);
-    this.sunTarget.updateMatrixWorld(true);
+    const along = radius * sinE + half * cosE;
+    const depth = radius * cosE + half * sinE;
+    const distance = depth + 10;
+    const centreY = this.castTop / 2;
+
+    this.sunTarget.position.set(0, centreY, 0);
+    this.sun.position.set(
+      direction.x * distance,
+      centreY + direction.y * distance,
+      direction.z * distance,
+    );
+
     const shadowCamera = this.sun.shadow.camera;
-    shadowCamera.updateMatrixWorld(true);
+    shadowCamera.left = -radius;
+    shadowCamera.right = radius;
+    shadowCamera.top = along;
+    shadowCamera.bottom = -along;
+    shadowCamera.near = Math.max(0.5, distance - depth);
+    shadowCamera.far = distance + depth;
 
-    // Round the focus point to whole shadow-map texels *in light space*, then
-    // bring it back to world space and re-aim the light at it.
-    const texelSize = (SHADOW_RADIUS * 2) / this.engine.settings.shadowMapSize;
-    this.lightSpace.copy(shadowCamera.matrixWorldInverse);
-    this.snapped.copy(this.focus).applyMatrix4(this.lightSpace);
-    this.snapped.x = Math.round(this.snapped.x / texelSize) * texelSize;
-    this.snapped.y = Math.round(this.snapped.y / texelSize) * texelSize;
-    this.snapped.applyMatrix4(shadowCamera.matrixWorld);
-
-    this.sunTarget.position.copy(this.snapped);
-    this.sun.position.copy(this.snapped).addScaledVector(direction, SHADOW_DEPTH * 0.45);
     this.sun.updateMatrixWorld(true);
     this.sunTarget.updateMatrixWorld(true);
     shadowCamera.updateProjectionMatrix();

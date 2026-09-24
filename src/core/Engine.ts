@@ -21,6 +21,16 @@ export interface QualityProfile {
   /** Upper bound on the device pixel ratio we are willing to render at. */
   maxPixelRatio: number;
   shadows: boolean;
+  /**
+   * Side of the sun's shadow map, in texels.
+   *
+   * It covers the whole stack - about 120 m across - because the frustum is
+   * fitted to the world rather than following the player, so these are chosen
+   * for the resulting texel size on the ground: 39 mm at ultra and high, 59 mm
+   * at medium. A shadow edge in this game is a chunky prop on flat dirt, and
+   * four centimetres of it is below what anyone will look at; twelve, which is
+   * what 1024 gave, is not.
+   */
   shadowMapSize: number;
   /** Straw instances spread across the whole pile. */
   shellBudget: number;
@@ -52,7 +62,7 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
   medium: {
     maxPixelRatio: 1.25,
     shadows: true,
-    shadowMapSize: 1024,
+    shadowMapSize: 2048,
     shellBudget: 9000,
     bandBudget: 3600,
     bloom: true,
@@ -65,7 +75,7 @@ export const QUALITY_PROFILES: Record<QualityTier, QualityProfile> = {
   high: {
     maxPixelRatio: 1.6,
     shadows: true,
-    shadowMapSize: 2048,
+    shadowMapSize: 3072,
     shellBudget: 15000,
     bandBudget: 6000,
     bloom: true,

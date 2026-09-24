@@ -434,6 +434,10 @@ export class Game {
     });
     this.populate(tier);
     this.terrain.refreshColors();
+    // The shadow camera covers the whole stack instead of following the
+    // player, so it has to be told how big this one is.
+    const extent = this.scenery.castExtent;
+    this.environment.setCastExtent(extent.radius, extent.top);
   }
 
   /**
@@ -1281,7 +1285,7 @@ export class Game {
       this.engine.camera,
       this.player.desiredFov(settings.fov) - this.inspectZoom * 22,
     );
-    this.environment.update(dt, this.engine.camera, this.player.position);
+    this.environment.update(dt, this.engine.camera);
     this.scenery?.update(dt);
     this.livestock?.update(dt, this.player.position);
     this.flash.update(dt);

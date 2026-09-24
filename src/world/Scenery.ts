@@ -209,6 +209,9 @@ export class Scenery {
    */
   private readonly clearings: { x: number; z: number; radius: number }[] = [];
   private readonly props: Object3D[] = [];
+  /** Farthest edge and highest point of anything placed, from the world origin. */
+  private castRadius = 0;
+  private castTop = 0;
   private readonly matrix = new Matrix4();
   private readonly quaternion = new Quaternion();
   private readonly position = new Vector3();
@@ -251,6 +254,19 @@ export class Scenery {
     return this.ringRadius + this.options.boundaryMargin;
   }
 
+  /**
+   * A cylinder around the origin containing everything the scenery put down,
+   * trees on the far hillside included.
+   *
+   * The shadow camera is fitted to this. It is measured rather than derived
+   * from the ring radii because the tree line is scattered with a random
+   * radius and the terrain it lands on is a hill, so the only honest answer is
+   * where the props actually ended up.
+   */
+  get castExtent(): { radius: number; top: number } {
+    return { radius: this.castRadius, top: this.castTop };
+  }
+
   // ---------------------------------------------------------------- placing
   /**
    * Add a prop, drop it onto the terrain and register a collider for it.
@@ -271,6 +287,9 @@ export class Scenery {
     const loaded = this.assets.model(model);
     const object = this.assets.instantiate(model);
     const y = this.terrain.heightAt(x, z);
+    const spread = (Math.max(loaded.size.x, loaded.size.z) * scale) / 2;
+    this.castRadius = Math.max(this.castRadius, Math.hypot(x, z) + spread);
+    this.castTop = Math.max(this.castTop, y + loaded.size.y * scale);
     object.position.set(x, y, z);
     object.rotation.y = yaw;
     object.scale.setScalar(scale);
@@ -497,6 +516,8 @@ export class Scenery {
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+    this.castRadius = Math.max(this.castRadius, radius + span);
+    this.castTop = Math.max(this.castTop, this.assets.model('fence_section').size.y);
     this.fenceMesh = mesh;
     this.group.add(mesh);
   }
