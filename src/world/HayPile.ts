@@ -123,10 +123,7 @@ export class HayPile {
     this.core.receiveShadow = true;
     this.core.matrixAutoUpdate = false;
     this.core.updateMatrix();
-    // Heights only ever decrease, so the sphere computed for the pristine pile
-    // bounds every state it will ever be in. Recomputing it per dig measured at
-    // up to 2.8 ms a click on a large stack, for no benefit at all.
-    this.coreGeometry.computeBoundingSphere();
+    this.boundCore();
     this.group.add(this.core);
 
     const geometry = assets.geometryOf('straw');
@@ -193,6 +190,32 @@ export class HayPile {
     // the frustum. Heights only fall and anchors never move, so the sphere
     // computed here bounds every state the pile will ever be in.
     this.shell.computeBoundingSphere();
+  }
+
+  /**
+   * Bound the core mesh for frustum culling.
+   *
+   * It has to be done from the field's dimensions rather than with
+   * `computeBoundingSphere`, because at this point in construction the position
+   * attribute is still the zero-filled array `buildCoreGeometry` allocated -
+   * `syncCore` has not run yet. Asking three.js to bound that returns a sphere
+   * of radius zero at the pile's origin, and a zero-radius sphere culls the
+   * haystack from every angle that does not happen to put its centre point on
+   * screen: stand on the crown, or turn sixty degrees at the rim, and the whole
+   * stack vanishes and you see straight through to the grass.
+   *
+   * Analytic is also the right answer on its merits. The pile is a disc of
+   * `radius` with heights in [0, highest]; it never moves and, since digging
+   * only ever lowers cells, it never grows. So one sphere bounds every state
+   * the pile will ever be in, for the cost of a square root - where
+   * recomputing per dig measured at up to 2.8 ms a click on a large stack.
+   */
+  private boundCore(): void {
+    const half = this.field.highest / 2;
+    const sphere = this.coreGeometry.boundingSphere ?? new Sphere();
+    sphere.center.set(0, half, 0);
+    sphere.radius = Math.hypot(this.field.radius, half);
+    this.coreGeometry.boundingSphere = sphere;
   }
 
   // ------------------------------------------------------------- public API

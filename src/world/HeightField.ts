@@ -47,6 +47,14 @@ export class HeightField {
   readonly resolution: number;
   readonly radius: number;
   readonly peak: number;
+  /**
+   * The tallest cell the pile was generated with, in metres.
+   *
+   * Not the same as `peak`, which is the nominal height the dome is built to:
+   * the noise and the lumps on top of it push the real crown some 20% higher.
+   * Anything that has to *bound* the pile has to use this one.
+   */
+  readonly highest: number;
   /** Metres per cell. */
   readonly cellSize: number;
   readonly cellArea: number;
@@ -74,6 +82,9 @@ export class HeightField {
     this.original = new Float32Array(count);
     this.generate();
     this.original.set(this.heights);
+    let highest = 0;
+    for (let i = 0; i < count; i++) if (this.original[i] > highest) highest = this.original[i];
+    this.highest = highest;
     this.originalVolume = this.computeVolume();
     this.volume = this.originalVolume;
     this.markAll();
