@@ -721,7 +721,12 @@ export class Game {
     };
     this.player.onLand = (impact) => {
       this.audio.play('land', { volume: clamp01(impact / 14) });
-      this.screen.shake(clamp01(impact / 22) * 0.25, 7);
+      // Nothing for an ordinary jump. A flat jump lands at six metres a
+      // second, and shaking the screen every time the player hops is how a
+      // jump button ends up feeling like a punishment; the controller's own
+      // knee already carries the weight of it. Above that, a real fall still
+      // rattles.
+      this.screen.shake(clamp01((impact - 7) / 15) * 0.22, 7);
     };
 
     this.interactions.triggered.on((item) => this.interact(item));

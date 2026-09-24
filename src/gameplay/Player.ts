@@ -56,6 +56,35 @@ const COYOTE_TIME = 0.12;
 const JUMP_BUFFER = 0.14;
 const MAX_PITCH = Math.PI * 0.49;
 
+/**
+ * Head bob, in metres of camera travel at a flat-out sprint.
+ *
+ * Halved from where they started, which was a nine-centimetre vertical
+ * excursion three or four times a second - a gait you would take someone to
+ * hospital for. Bob is a cue that you are moving, and past a couple of
+ * centimetres it stops being a cue and starts being the thing you are looking
+ * at.
+ */
+const BOB_RISE = 0.022;
+const BOB_SWAY = 0.02;
+const BOB_ROLL = 0.006;
+
+/**
+ * The landing dip: how deep the knee bends, and how fast.
+ *
+ * `LAND_FLOOR` is the impact a landing has to beat before the camera reacts at
+ * all, set just under the speed a flat jump comes down at. `LAND_BEND` is how
+ * quickly the camera chases the impulse and `LAND_RECOVER` how quickly the
+ * impulse fades; the camera therefore turns round somewhere in between, which
+ * measures as a flat jump costing 1.4 cm of view and a long fall 7.4 cm, both
+ * bottoming out about ninety milliseconds after the feet do.
+ */
+const LAND_DIP = 0.13;
+const LAND_FLOOR = 3;
+const LAND_FULL = 16;
+const LAND_BEND = 18;
+const LAND_RECOVER = 6;
+
 export interface PlayerModifiers {
   /** Multiplier on walk speed from upgrades and rebirths. */
   speed: number;
@@ -110,7 +139,19 @@ export class Player {
   private eyeOffset = DEFAULT_TUNING.eyeHeight;
   private bobPhase = 0;
   private bobAmount = 0;
+  /**
+   * The landing dip: where the camera is, and where the landing is pulling it.
+   *
+   * Two values, because one was the problem. The dip used to be set outright
+   * and then eased away, and an ordinary jump comes down at six metres a
+   * second, which put the camera ten centimetres lower in a single frame.
+   * However gently it floats back up, the drop itself is a step change in the
+   * height of the view, and that is a jolt. Now the landing sets an impulse
+   * that immediately starts fading, and the camera chases it; having to travel
+   * to get anywhere is what turns a jolt into a knee.
+   */
   private landingDip = 0;
+  private landingImpulse = 0;
   private stepAccumulator = 0;
   private slopeSpeedScale = 1;
 
@@ -128,6 +169,7 @@ export class Player {
     this.yaw = yaw;
     this.pitch = 0;
     this.grounded = true;
+    this.settleCamera();
   }
 
   /** Teleport with an explicit height, for the dev console and free-flight. */
@@ -136,6 +178,14 @@ export class Player {
     this.previousPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
     this.grounded = false;
+    this.settleCamera();
+  }
+
+  /** Park the bob and the landing spring, so arriving somewhere is not a fall. */
+  private settleCamera(): void {
+    this.landingDip = 0;
+    this.landingImpulse = 0;
+    this.bobAmount = 0;
   }
 
   /** Current eye position, unsmoothed. Used for gameplay queries. */
@@ -310,8 +360,17 @@ export class Player {
     const floor = Math.max(terrain, support === -Infinity ? terrain : support);
 
     if (this.position.y <= floor) {
-      if (!this.grounded && this.velocity.y < -1.5) this.onLand?.(-this.velocity.y);
-      if (!this.grounded) this.landingDip = clamp01(-this.velocity.y / 14);
+      if (!this.grounded && this.velocity.y < -1.5) {
+        const impact = -this.velocity.y;
+        this.onLand?.(impact);
+        // `max`, not `+=`: two landings in quick succession are one landing as
+        // far as the camera is concerned, and adding them is how a player who
+        // bunny-hops down a slope ends up looking at their own feet.
+        this.landingImpulse = Math.max(
+          this.landingImpulse,
+          LAND_DIP * clamp01((impact - LAND_FLOOR) / LAND_FULL),
+        );
+      }
       this.position.y = floor;
       this.velocity.y = 0;
       this.grounded = true;
@@ -330,6 +389,14 @@ export class Player {
     if (this.grounded) {
       this.stepAccumulator += stepDistance;
       const stride = this.sprinting ? 2.3 : 1.85;
+      // Bob on the distance walked, not on the clock. The two used to be
+      // separate numbers that only agreed at walking pace: at a sprint the
+      // camera bobbed a quarter faster than the feet it was meant to belong
+      // to, and any upgrade to movement speed pulled them further apart. Half
+      // a turn of `bobPhase` per stride puts the dip and the footstep sound on
+      // the same event, and walking into a wall - where the distance is zero -
+      // stops the camera rather than jogging on the spot.
+      this.bobPhase += (Math.PI * stepDistance) / stride;
       if (this.stepAccumulator >= stride) {
         this.stepAccumulator = 0;
         this.onStep?.(this.speed);
@@ -368,8 +435,9 @@ export class Player {
 
     const moving = this.grounded && this.speed > 0.6;
     this.bobAmount = damp(this.bobAmount, moving ? this.speedFraction : 0, 9, dt);
-    if (moving) this.bobPhase += dt * (7.4 + this.speedFraction * 4.6);
-    this.landingDip = damp(this.landingDip, 0, 7, dt);
+
+    this.landingImpulse = damp(this.landingImpulse, 0, LAND_RECOVER, dt);
+    this.landingDip = damp(this.landingDip, this.landingImpulse, LAND_BEND, dt);
   }
 
   // ----------------------------------------------------------------- camera
@@ -388,14 +456,14 @@ export class Player {
     // Figure-of-eight bob: vertical at twice the horizontal frequency is what
     // makes a walk cycle read as footsteps rather than a bouncing ball.
     const bob = this.bobAmount * bobScale;
-    const bobY = Math.sin(this.bobPhase * 2) * 0.045 * bob;
-    const bobX = Math.sin(this.bobPhase) * 0.038 * bob;
-    const roll = Math.sin(this.bobPhase) * 0.012 * bob;
+    const bobY = Math.sin(this.bobPhase * 2) * BOB_RISE * bob;
+    const bobX = Math.sin(this.bobPhase) * BOB_SWAY * bob;
+    const roll = Math.sin(this.bobPhase) * BOB_ROLL * bob;
     const idleSway = wobble(elapsed, 0.5) * 0.006 * (1 - bob);
 
     camera.position.set(
       x + this.right.x * bobX,
-      y + this.eyeOffset + bobY - this.landingDip * 0.24 + idleSway,
+      y + this.eyeOffset + bobY - this.landingDip + idleSway,
       z + this.right.z * bobX,
     );
     camera.rotation.set(this.pitch, this.yaw, roll, 'YXZ');
