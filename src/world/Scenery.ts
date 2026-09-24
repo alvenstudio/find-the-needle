@@ -291,6 +291,8 @@ export class Scenery {
         this.collision.addCylinder(x, z, Math.max(halfX, halfZ), y, top);
       } else if (solid === 'shell') {
         this.addShellColliders(model, x, y, z, yaw, halfX, halfZ, top);
+      } else if (solid === 'frame') {
+        this.addFrameColliders(FRAME_PARTS[model] ?? [], x, y, z, yaw, scale);
       } else {
         this.collision.addBox(new Vector3(x, y, z), halfX, halfZ, y, top, yaw);
       }
@@ -339,6 +341,37 @@ export class Scenery {
     }
   }
 
+  /**
+   * Collide a building that is mostly air as the few pieces that are not.
+   *
+   * Parts are authored in the model's own metres, so the table reads like the
+   * building: a wall across the back, a post at each corner of the bay.
+   */
+  private addFrameColliders(
+    parts: readonly FramePart[],
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    scale: number,
+  ): void {
+    const sin = Math.sin(yaw);
+    const cos = Math.cos(yaw);
+    for (const part of parts) {
+      const lx = part.x * scale;
+      const lz = part.z * scale;
+      this.position.set(x + lx * cos + lz * sin, y, z - lx * sin + lz * cos);
+      this.collision.addBox(
+        this.position,
+        part.halfX * scale,
+        part.halfZ * scale,
+        y,
+        y + part.height * scale,
+        yaw,
+      );
+    }
+  }
+
   private placeBuildings(palette: ScenePalette, rng: Rng): void {
     // Inside the fence, and close enough that walking to the barn is a
     // ten-second detour rather than a hike across an empty field.
@@ -353,8 +386,10 @@ export class Scenery {
       const z = Math.sin(angle) * distance;
       // A building you can walk into has to face the yard squarely, or the
       // doorway ends up pointing at the fence.
-      const solid: SolidKind = model in DOOR_WIDTHS ? 'shell' : OPEN_SIDED.has(model) ? 'none' : 'box';
-      const jitter = solid === 'shell' ? 0 : rng.signed(0.22);
+      const solid: SolidKind = model in DOOR_WIDTHS ? 'shell' : model in FRAME_PARTS ? 'frame' : 'box';
+      // A building whose collision is a hand-authored list of pieces has to
+      // stand where the model stands, or the pieces land beside the walls.
+      const jitter = solid === 'box' ? rng.signed(0.22) : 0;
       const yaw = Math.atan2(-x, -z) + jitter;
       const placed = this.place(model, x, z, yaw, 1, solid);
       if (placed) this.terrain.addDirtPatch(x, z, solid === 'shell' ? 5.5 : 3.2);
@@ -581,7 +616,16 @@ export class Scenery {
 }
 
 /** How a prop blocks the player. */
-type SolidKind = 'box' | 'cylinder' | 'shell' | 'none';
+type SolidKind = 'box' | 'cylinder' | 'shell' | 'frame' | 'none';
+
+/** One solid piece of an open-framed building, in the model's local metres. */
+interface FramePart {
+  x: number;
+  z: number;
+  halfX: number;
+  halfZ: number;
+  height: number;
+}
 
 /**
  * Buildings modelled with a real doorway, and how wide it is.
@@ -594,13 +638,29 @@ const DOOR_WIDTHS: Readonly<Record<string, number>> = {
 };
 
 /**
- * Buildings that are open on most sides and carry no collision at all.
+ * Buildings that are mostly air, as the pieces of them that are not.
  *
- * A pole barn is a roof on six posts; boxing it makes the shelter you are
- * meant to walk under into a solid block, and colliding the posts individually
- * buys nothing but a snag.
+ * A pole barn is a roof on six posts with one wall across the back, so boxing
+ * its footprint would make the shelter you are meant to walk under into a
+ * solid block. It used to carry no collision at all instead, and that is worse
+ * than either: measured across the five scenes it stands in, a player could
+ * walk into the middle of it from 17 or 18 of 18 compass headings, straight
+ * through an eight-metre plank wall and through every post on the way. An
+ * open-sided building is open on the sides that are open.
+ *
+ * Numbers are the model's own, read back off the exported mesh: the wall runs
+ * x -4..4 at z -2.7, the posts stand at x -3.7, 0, 3.7 on both z -2.7 and
+ * 2.7. The wall collider is twice the thickness of the plank it stands for,
+ * six centimetres proud on each side, which no one will ever feel and which
+ * leaves no doubt about a capsule crossing it in one step.
  */
-const OPEN_SIDED: ReadonlySet<string> = new Set(['hay_barn']);
+const POLE_BARN_POSTS: readonly FramePart[] = [-3.7, 0, 3.7].flatMap((x) =>
+  [-2.7, 2.7].map((z) => ({ x, z, halfX: 0.12, halfZ: 0.12, height: 3.45 })),
+);
+
+const FRAME_PARTS: Readonly<Record<string, readonly FramePart[]>> = {
+  hay_barn: [{ x: 0, z: -2.7, halfX: 4, halfZ: 0.12, height: 3.7 }, ...POLE_BARN_POSTS],
+};
 
 /** Authored length of one fence span, as a fallback if the model is missing. */
 const FENCE_SPAN = 2.4;
