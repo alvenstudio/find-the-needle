@@ -244,6 +244,26 @@ pile is bound by total instance count, so moving instances from *everywhere* to
 - **Adaptive resolution.** The renderer scales its internal resolution to hold
   the frame budget before it asks the player to turn anything off, and gives up
   a whole quality tier when that is not enough.
+- **A shadow camera that does not follow you.** The usual trick is a tight
+  frustum on the player, snapped to the shadow map's texel grid. That was here
+  and it popped: 26 m does not reach a tree line that starts at 32 m, so across
+  48 standing positions the number of the yard's 91 casters that had shadows
+  ranged from 34 to 68, and a hillside of trees switched on and off as you
+  crossed the yard. But the world is a bounded disc the player cannot leave,
+  and each stack holds one sun elevation, so the frustum is fitted to the disc
+  instead — 91 of 91 from everywhere, and no snapping needed, because a
+  projection that never changes lands on the same texels by construction. The
+  fit is analytic: the light's right axis is horizontal, so the disc needs
+  exactly its own radius across; its up axis is tilted by the elevation, so the
+  same disc needs `R·sin(E)` along it plus `h·cos(E)` for a caster of height h.
+  A low sun therefore wants a *shorter* frustum in that direction, and dawn
+  gets 14 mm texels along the sun where noon gets 38.
+- **Collide what is there, not what it is called.** Buildings are not boxes.
+  The barn is five wall slabs with a three-metre gap where its doorway is, and
+  the pole barn — which is a roof on six posts with one wall across the back —
+  is one slab and six boxes. It used to be classed "open-sided" and given no
+  collision at all, which meant you could walk into the middle of it from 17
+  of 18 compass headings, straight through an eight-metre plank wall.
 - **Procedural audio.** Every sound is synthesised at runtime with the Web Audio
   API — filtered noise bursts for hay, FM for anything metallic, a lookahead
   scheduler for a generative music bed. Zero bytes of audio ship.
@@ -277,9 +297,14 @@ fill rate, and a weak GPU is just as often short of vertex throughput or
 shadow budget - so after six seconds pinned at the resolution floor the engine
 gives up a whole tier and hands the resolution back. Ultra to high to medium
 to low, each step dropping the pixel ratio, the shadow map, bloom and the
-straw budget: 521k triangles and 133 draw calls at ultra, 342k and 60 at low,
+straw budget: 526k triangles and 155 draw calls at ultra, 343k and 64 at low,
 with the pile still reading as loose hay. It only ever climbs down, and only
 on "auto".
+
+Shadow map sizes are picked for the texel size they produce on the ground
+rather than as round numbers, because the frustum covers the whole stack —
+about 120 m across — instead of a patch around the player: 39 mm at ultra and
+high, 59 mm at medium, and no shadows at all at low.
 
 ### Balance is measured, not guessed
 
